@@ -57,6 +57,36 @@ channels:
 
 5) **Test** by @mentioning the bot in a room it’s a member of.
 
+### Example chat commands (reply to a room + model switching)
+
+In Rocket.Chat you can send a normal message, or you can switch the session’s model first.
+
+**Switch model, then ask a question**:
+
+```text
+@Chad /model qwen3
+@Chad write a 5-line summary of our incident in plain English
+```
+
+**Example output** (with `messages.responsePrefix: "({model}) "` enabled):
+
+```text
+(mlx-qwen/mlx-community/Qwen3-14B-4bit) Here’s a 5-line summary...
+...
+```
+
+**Send a one-off message to a specific Rocket.Chat room** (from the gateway host):
+
+```bash
+openclaw message send --channel rocketchat --to room:GENERAL --message "Hello from OpenClaw"
+```
+
+**Send using a specific model for that one message**:
+
+```bash
+openclaw message send --channel rocketchat --to room:GENERAL --message "/model qwen3 Hello from Qwen3"
+```
+
 ---
 
 ## Install
