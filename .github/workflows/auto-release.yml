@@ -18,10 +18,12 @@ jobs:
 
       - name: Determine version
         id: ver
+        shell: bash
         run: |
-          node -p "require('./package.json').version" > VERSION
-          echo "version=$(cat VERSION)" >> $GITHUB_OUTPUT
-          echo "tag=v$(cat VERSION)" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Check if tag already exists
         id: tagcheck
@@ -74,4 +76,9 @@ jobs:
         if: steps.tagcheck.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is missing/empty (NODE_AUTH_TOKEN not set)."
+            exit 1
+          fi
+          npm publish --access public

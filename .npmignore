@@ -1,0 +1,11 @@
+# Don't ship GitHub metadata / CI with the npm package
+.github/
+
+# Avoid shipping any build/temp files
+VERSION
+*.tgz
+
+# Dev/test files
+*.log
+notes/
+tmp/
