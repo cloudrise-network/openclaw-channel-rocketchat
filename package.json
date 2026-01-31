@@ -1,0 +1,31 @@
+{
+  "name": "@cloudrise/openclaw-channel-rocketchat",
+  "version": "0.1.0",
+  "description": "Rocket.Chat channel plugin for OpenClaw (Cloudrise)",
+  "type": "module",
+  "main": "index.ts",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "rocketchat",
+      "label": "Rocket.Chat",
+      "selectionLabel": "Rocket.Chat (self-hosted)",
+      "docsPath": "/channels/rocketchat",
+      "docsLabel": "rocketchat",
+      "blurb": "Self-hosted team chat via Rocket.Chat REST + Realtime API.",
+      "order": 66,
+      "aliases": [
+        "rc",
+        "rocket"
+      ]
+    }
+  },
+  "dependencies": {
+    "ws": "^8.14.0"
+  },
+  "peerDependencies": {
+    "openclaw": "*"
+  }
+}

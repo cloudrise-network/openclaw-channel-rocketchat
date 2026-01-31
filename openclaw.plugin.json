@@ -1,0 +1,12 @@
+{
+  "id": "rocketchat",
+  "name": "Rocket.Chat",
+  "description": "Rocket.Chat channel plugin for OpenClaw",
+  "version": "0.1.0",
+  "channels": ["rocketchat"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
