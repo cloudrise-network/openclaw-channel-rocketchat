@@ -93,6 +93,10 @@ plugins:
 
 Then restart the gateway.
 
+## Features
+
+- **Model prefix**: honors `messages.responsePrefix` (e.g. `({model}) `) so replies can include the model name.
+
 ## Configuration
 
 > Use the room **rid** (e.g. `GENERAL`) for per-room settings.
