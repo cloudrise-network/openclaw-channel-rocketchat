@@ -63,8 +63,23 @@ In Rocket.Chat you can send a normal message, or you can switch the session’s 
 
 **Switch model, then ask a question**:
 
+Rocket.Chat treats messages starting with `/` as Rocket.Chat slash-commands.
+So for model switching, either:
+
+- put the directive *after* an @mention (works on most servers/clients), or
+- use the plugin’s alternate `--model` / `--<alias>` syntax.
+
 ```text
+# Option A: use /model after an @mention
 @Chad /model qwen3
+@Chad write a 5-line summary of our incident in plain English
+
+# Option B: alternate syntax (avoids Rocket.Chat /commands)
+@Chad --model qwen3
+@Chad write a 5-line summary of our incident in plain English
+
+# Option C: shorthand alias form
+@Chad --qwen3
 @Chad write a 5-line summary of our incident in plain English
 ```
 

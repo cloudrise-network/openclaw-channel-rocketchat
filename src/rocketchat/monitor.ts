@@ -397,11 +397,20 @@ async function handleIncomingMessage(
     body: rawBody,
   }) ?? rawBody;
 
+  // Rocket.Chat NOTE: Messages starting with "/" are treated as Rocket.Chat slash-commands.
+  // To make model switching usable from chat, we support an alternate syntax:
+  //   --model qwen3
+  //   --qwen3
+  // which we normalize into OpenClaw inline directives.
+  const commandBody = rawBody
+    .replace(/^\s*--model\b/i, "/model")
+    .replace(/^\s*--/, "/");
+
   // Finalize inbound context
   const ctxPayload = core.channel?.reply?.finalizeInboundContext?.({
     Body: body,
     RawBody: rawBody,
-    CommandBody: rawBody,
+    CommandBody: commandBody,
     From: isGroup ? `rocketchat:room:${roomId}` : `rocketchat:${senderId}`,
     To: `rocketchat:${roomId}`,
     SessionKey: route.sessionKey,
