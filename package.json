@@ -1,6 +1,6 @@
 {
   "name": "@cloudrise/openclaw-channel-rocketchat",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Rocket.Chat channel plugin for OpenClaw (Cloudrise)",
   "type": "module",
   "main": "index.ts",

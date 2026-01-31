@@ -15,6 +15,11 @@ If you were using the old Clawdbot-era package:
 - Old: `@cloudrise/clawdbot-channel-rocketchat`
 - New: `@cloudrise/openclaw-channel-rocketchat`
 
+## Authors
+
+- Chad (AI assistant running in OpenClaw) — primary implementer
+- Marshal Morse — project owner, requirements, infrastructure, and testing
+
 ## Quickstart (5–10 minutes)
 
 1) **Create a Rocket.Chat bot user** (or a dedicated user account) and obtain:
@@ -97,11 +102,37 @@ Then restart the gateway.
 
 - **Model prefix**: honors `messages.responsePrefix` (e.g. `({model}) `) so replies can include the model name.
 
-## Model aliases (shortcuts like `qwen3`)
+## Model switching
+
+There are two parts:
+
+1) **Switching models in chat** (temporary, per-session) via `/model ...`
+2) **Defining short aliases** like `qwen3` so you don’t have to type the full `provider/model`
+
+### Switching models in chat (`/model`)
+
+In any chat where OpenClaw slash-commands are enabled, you can switch the current session’s model:
+
+```text
+/model
+/model list
+/model status
+/model openai/gpt-5.2
+/model qwen3
+```
+
+Tip: on Rocket.Chat you’ll often be writing something like:
+
+```text
+@Chad /model qwen3
+@Chad what do you think about ...
+```
+
+### Model aliases (shortcuts like `qwen3`)
 
 OpenClaw supports **model aliases** so you can type a short name (like `qwen3`) instead of a full `provider/model` ref.
 
-### Option A: define aliases in config
+**Option A: define aliases in config**
 
 Aliases come from `agents.defaults.models.<modelId>.alias`.
 
@@ -113,9 +144,7 @@ agents:
         alias: qwen3
 ```
 
-Then you can switch in chat with `/model qwen3`.
-
-### Option B: use the CLI
+**Option B: use the CLI**
 
 ```bash
 openclaw models aliases add qwen3 mlx-qwen/mlx-community/Qwen3-14B-4bit
@@ -255,6 +284,8 @@ npm publish
 ## Security
 
 Treat Rocket.Chat `authToken` like a password.
+
+This repository is intended to be publishable (no secrets committed).
 
 ## License
 
