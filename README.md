@@ -97,6 +97,35 @@ Then restart the gateway.
 
 - **Model prefix**: honors `messages.responsePrefix` (e.g. `({model}) `) so replies can include the model name.
 
+## Model aliases (shortcuts like `qwen3`)
+
+OpenClaw supports **model aliases** so you can type a short name (like `qwen3`) instead of a full `provider/model` ref.
+
+### Option A: define aliases in config
+
+Aliases come from `agents.defaults.models.<modelId>.alias`.
+
+```yaml
+agents:
+  defaults:
+    models:
+      "mlx-qwen/mlx-community/qwen3-14b-4bit":
+        alias: qwen3
+```
+
+Then you can switch in chat with `/model qwen3`.
+
+### Option B: use the CLI
+
+```bash
+openclaw models aliases add qwen3 mlx-qwen/mlx-community/Qwen3-14B-4bit
+openclaw models aliases list
+```
+
+Notes:
+- Model refs are normalized to lowercase.
+- If you define the same alias in config and via CLI, your config value wins.
+
 ## Configuration
 
 > Use the room **rid** (e.g. `GENERAL`) for per-room settings.
@@ -178,6 +207,50 @@ channels:
 Typing indicators are emitted via DDP `stream-notify-room` using `<RID>/user-activity`.
 - Channel replies emit typing without `tmid` → shows under channel composer
 - Thread replies include `{ tmid: ... }` → shows under thread composer
+
+## Development
+
+```bash
+git clone git@github.com:cloudrise-network/openclaw-channel-rocketchat.git
+cd openclaw-channel-rocketchat
+npm install
+```
+
+Local smoke tests (uses env vars; see `.env.example`):
+
+```bash
+# REST send
+node test-chad.mjs
+
+# Realtime receive
+node test-realtime.mjs
+```
+
+## Packaging + publishing (no secrets)
+
+Before publishing:
+
+1) Run a quick secret scan (at minimum):
+
+```bash
+grep -RIn --exclude-dir=node_modules --exclude=package-lock.json -E "npm_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-|authToken\s*[:=]\s*\"" .
+```
+
+2) Bump version in `package.json`.
+
+3) Verify the tarball:
+
+```bash
+npm pack
+```
+
+4) Publish:
+
+```bash
+npm publish
+```
+
+(There is also a GitHub Actions workflow in `.github/workflows/publish.yml`.)
 
 ## Security
 
