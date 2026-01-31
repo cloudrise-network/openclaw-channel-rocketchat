@@ -8,6 +8,8 @@ import type {
   RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
+import { createReplyPrefixContext } from "openclaw/plugin-sdk";
+
 import { getRocketChatRuntime } from "../runtime.js";
 import { resolveRocketChatAccount, type ResolvedRocketChatAccount } from "./accounts.js";
 import {
@@ -484,10 +486,16 @@ async function handleIncomingMessage(
   startTypingAfterDelay();
 
   try {
+    // Wire up responsePrefix support (e.g. messages.responsePrefix: "({model}) ")
+    // so Rocket.Chat replies can include the selected model name.
+    const prefix = createReplyPrefixContext({ cfg, agentId: route.agentId });
+
     await core.channel?.reply?.dispatchReplyWithBufferedBlockDispatcher?.({
       ctx: ctxPayload,
       cfg,
       dispatcherOptions: {
+        responsePrefix: prefix.responsePrefix,
+        responsePrefixContextProvider: prefix.responsePrefixContextProvider,
         deliver: async (payload) => {
           const text = (payload as { text?: string }).text ?? "";
           if (!text.trim()) return;
@@ -503,6 +511,9 @@ async function handleIncomingMessage(
         onError: (err, info) => {
           logger.error?.(`Rocket.Chat ${info.kind} reply failed: ${String(err)}`);
         },
+      },
+      replyOptions: {
+        onModelSelected: prefix.onModelSelected,
       },
     });
   } finally {
