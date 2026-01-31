@@ -73,14 +73,12 @@ function chatType(kind: "dm" | "group" | "channel"): "direct" | "group" | "chann
 export async function monitorRocketChatProvider(
   opts: MonitorRocketChatOpts
 ): Promise<() => void> {
-  console.log("[ROCKETCHAT DEBUG] monitorRocketChatProvider called!");
   const core = getRocketChatRuntime();
   const logger = core?.logging?.getChildLogger?.({ module: "rocketchat" }) ?? {
     info: console.log,
     debug: console.log,
     error: console.error,
   };
-  console.log("[ROCKETCHAT DEBUG] Got logger, getting config...");
   const cfg = opts.config ?? core?.config?.loadConfig?.() ?? {};
 
   const account = resolveRocketChatAccount({
@@ -231,9 +229,7 @@ export async function monitorRocketChatProvider(
   });
 
   // Connect and subscribe to all rooms
-  console.log("[ROCKETCHAT DEBUG] About to connect realtime...");
   await realtime.connect();
-  console.log("[ROCKETCHAT DEBUG] Realtime connected!");
   
   // Subscribe to current rooms
   await refreshSubscriptions();
