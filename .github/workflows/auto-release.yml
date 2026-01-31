@@ -46,3 +46,32 @@ jobs:
           gh release create "${{ steps.ver.outputs.tag }}" \
             --title "${{ steps.ver.outputs.tag }}" \
             --notes "Automated release for version ${{ steps.ver.outputs.version }}."
+
+      # IMPORTANT: Tags/releases created by Actions do not trigger other workflows.
+      # So we publish to npm here in the same workflow.
+      - name: Setup Node
+        if: steps.tagcheck.outputs.exists != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Install
+        if: steps.tagcheck.outputs.exists != 'true'
+        run: npm ci
+
+      - name: Basic secret scan (fail fast)
+        if: steps.tagcheck.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RIn --exclude-dir=node_modules --exclude=package-lock.json -E "npm_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-|X-Auth-Token\s*:\s*|authToken\s*=\s*\"" .; then
+            echo "Potential secret pattern detected. Refusing to publish."
+            exit 1
+          fi
+
+      - name: Publish to npm
+        if: steps.tagcheck.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
