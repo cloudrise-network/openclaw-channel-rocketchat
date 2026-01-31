@@ -1,6 +1,16 @@
 name: Publish to npm
 
 on:
+  # NOTE: Releases created by GitHub Actions using GITHUB_TOKEN do NOT trigger
+  # other workflows (GitHub safety feature). We publish on tags instead.
+  push:
+    tags:
+      - "v*"
+
+  # Manual fallback
+  workflow_dispatch:
+
+  # Keep this for human-created releases
   release:
     types: [published]
 
