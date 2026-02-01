@@ -33,6 +33,24 @@ export type RealtimeOpts = {
   logger?: { debug?: (msg: string) => void; info?: (msg: string) => void };
 };
 
+export type RocketChatAttachment = {
+  title?: string;
+  title_link?: string;
+  image_url?: string;
+  audio_url?: string;
+  video_url?: string;
+  type?: string;
+  image_type?: string;
+  image_size?: number;
+};
+
+export type RocketChatFile = {
+  _id: string;
+  name: string;
+  type?: string;
+  size?: number;
+};
+
 export type IncomingMessage = {
   _id: string;
   rid: string;
@@ -41,12 +59,9 @@ export type IncomingMessage = {
   u: { _id: string; username: string; name?: string };
   tmid?: string;
   t?: string;
-  attachments?: Array<{
-    title?: string;
-    image_url?: string;
-    audio_url?: string;
-    video_url?: string;
-  }>;
+  attachments?: RocketChatAttachment[];
+  file?: RocketChatFile;
+  files?: RocketChatFile[];
 };
 
 export class RocketChatRealtime {

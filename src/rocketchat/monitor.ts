@@ -22,7 +22,7 @@ import {
   type RocketChatRoom,
   type RocketChatClient,
 } from "./client.js";
-import { RocketChatRealtime, type IncomingMessage } from "./realtime.js";
+import { RocketChatRealtime, type IncomingMessage, type RocketChatAttachment, type RocketChatFile } from "./realtime.js";
 import { sendMessageRocketChat } from "./send.js";
 
 export type MonitorRocketChatOpts = {
@@ -68,6 +68,83 @@ function chatType(kind: "dm" | "group" | "channel"): "direct" | "group" | "chann
   if (kind === "dm") return "direct";
   if (kind === "group") return "group";
   return "channel";
+}
+
+/** Image MIME types we can send to vision models */
+const IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
+function isImageMime(mime?: string): boolean {
+  if (!mime) return false;
+  return IMAGE_MIME_TYPES.has(mime.toLowerCase().split(";")[0].trim());
+}
+
+/**
+ * Extract image URLs from Rocket.Chat message attachments/files.
+ * Returns full URLs that can be fetched with auth headers.
+ */
+function extractImageUrls(
+  msg: IncomingMessage,
+  baseUrl: string
+): Array<{ url: string; mimeType?: string }> {
+  const images: Array<{ url: string; mimeType?: string }> = [];
+
+  // From attachments array (used for image_url references)
+  if (msg.attachments?.length) {
+    for (const att of msg.attachments) {
+      if (att.image_url) {
+        const url = att.image_url.startsWith("http")
+          ? att.image_url
+          : `${baseUrl}${att.image_url.startsWith("/") ? "" : "/"}${att.image_url}`;
+        images.push({ url, mimeType: att.image_type });
+      }
+    }
+  }
+
+  // From file/files (used for direct uploads)
+  const files = msg.files ?? (msg.file ? [msg.file] : []);
+  for (const f of files) {
+    if (f._id && f.name && isImageMime(f.type)) {
+      // Rocket.Chat file-upload URL pattern
+      const url = `${baseUrl}/file-upload/${f._id}/${encodeURIComponent(f.name)}`;
+      images.push({ url, mimeType: f.type });
+    }
+  }
+
+  return images;
+}
+
+/**
+ * Fetch an image from Rocket.Chat and return as base64 data URL.
+ */
+async function fetchImageAsDataUrl(
+  url: string,
+  authToken: string,
+  userId: string,
+  mimeType?: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "X-Auth-Token": authToken,
+        "X-User-Id": userId,
+      },
+    });
+    if (!res.ok) return null;
+
+    const contentType = mimeType ?? res.headers.get("content-type") ?? "image/png";
+    if (!isImageMime(contentType)) return null;
+
+    const buffer = await res.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    return `data:${contentType};base64,${base64}`;
+  } catch {
+    return null;
+  }
 }
 
 export async function monitorRocketChatProvider(
@@ -293,8 +370,16 @@ async function handleIncomingMessage(
     ? msg.ts.$date 
     : Date.parse(String(msg.ts));
 
+  // Extract image attachments (if any)
+  const baseUrl = account.baseUrl;
+  const authToken = account.authToken;
+  const userId = account.userId;
+  const imageRefs = extractImageUrls(msg, baseUrl);
+  
   let rawBody = msg.msg.trim();
-  if (!rawBody) return;
+  
+  // Allow messages with only images (no text)
+  if (!rawBody && imageRefs.length === 0) return;
 
   // Optional per-message overrides
   // - !thread  -> force reply in thread
@@ -307,7 +392,8 @@ async function handleIncomingMessage(
     forcedReplyMode = "channel";
     rawBody = rawBody.replace(/^!channel\b\s*/i, "").trim();
   }
-  if (!rawBody) return;
+  // Skip if no text and no images
+  if (!rawBody && imageRefs.length === 0) return;
 
   // Determine reply mode
   const baseReplyMode: "thread" | "channel" | "auto" =
@@ -388,14 +474,16 @@ async function handleIncomingMessage(
     : undefined;
 
   // Format the envelope body
+  // For image-only messages, use a placeholder so the agent knows there's content
+  const effectiveRawBody = rawBody || (imageRefs.length > 0 ? "[image]" : "");
   const body = core.channel?.reply?.formatAgentEnvelope?.({
     channel: "Rocket.Chat",
     from: fromLabel,
     timestamp: ts,
     previousTimestamp,
     envelope: envelopeOptions,
-    body: rawBody,
-  }) ?? rawBody;
+    body: effectiveRawBody,
+  }) ?? effectiveRawBody;
 
   // Rocket.Chat NOTE: Messages starting with "/" are treated as Rocket.Chat slash-commands.
   // To make model switching usable from chat, we support an alternate syntax:
@@ -405,6 +493,20 @@ async function handleIncomingMessage(
   const commandBody = rawBody
     .replace(/^\s*--model\b/i, "/model")
     .replace(/^\s*--/, "/");
+
+  // Fetch images as data URLs (authenticated fetch required for Rocket.Chat uploads)
+  let mediaUrls: string[] | undefined;
+  if (imageRefs.length > 0) {
+    const fetched = await Promise.all(
+      imageRefs.map((ref) =>
+        fetchImageAsDataUrl(ref.url, authToken, userId, ref.mimeType)
+      )
+    );
+    mediaUrls = fetched.filter((u): u is string => u !== null);
+    if (mediaUrls.length > 0) {
+      logger.debug?.(`Fetched ${mediaUrls.length} image(s) from Rocket.Chat attachments`);
+    }
+  }
 
   // Finalize inbound context
   const ctxPayload = core.channel?.reply?.finalizeInboundContext?.({
@@ -426,6 +528,9 @@ async function handleIncomingMessage(
     Timestamp: ts,
     OriginatingChannel: "rocketchat",
     OriginatingTo: `rocketchat:${roomId}`,
+
+    // Image attachments (fetched as base64 data URLs)
+    MediaUrls: mediaUrls?.length ? mediaUrls : undefined,
   });
 
   if (!ctxPayload) {

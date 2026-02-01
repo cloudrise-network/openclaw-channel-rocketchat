@@ -145,6 +145,7 @@ Then restart the gateway.
 
 ## Features
 
+- **Image attachments**: receives images uploaded to Rocket.Chat and passes them to the vision model.
 - **Model prefix**: honors `messages.responsePrefix` (e.g. `({model}) `) so replies can include the model name.
 
 ## Model switching
