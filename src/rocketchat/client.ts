@@ -225,3 +225,93 @@ export async function sendRocketChatTyping(
     body: JSON.stringify({ roomId, typing: Boolean(isTyping) }),
   });
 }
+
+export type RocketChatUploadOpts = {
+  roomId: string;
+  file: Buffer;
+  fileName: string;
+  mimeType?: string;
+  description?: string;
+  tmid?: string;
+};
+
+export type RocketChatUploadResult = {
+  _id: string;
+  rid: string;
+  ts: string;
+};
+
+/**
+ * Upload a file to a Rocket.Chat room.
+ * Uses multipart/form-data via the rooms.upload endpoint.
+ */
+export async function uploadRocketChatFile(
+  client: RocketChatClient,
+  opts: RocketChatUploadOpts
+): Promise<RocketChatUploadResult> {
+  const url = `${client.baseUrl}/api/v1/rooms.upload/${opts.roomId}`;
+  
+  // Build FormData manually for Node.js
+  const boundary = `----OpenClawBoundary${Date.now()}`;
+  const parts: Buffer[] = [];
+  
+  // Add file part
+  const fileHeader = [
+    `--${boundary}`,
+    `Content-Disposition: form-data; name="file"; filename="${opts.fileName}"`,
+    `Content-Type: ${opts.mimeType ?? "application/octet-stream"}`,
+    "",
+    "",
+  ].join("\r\n");
+  parts.push(Buffer.from(fileHeader));
+  parts.push(opts.file);
+  parts.push(Buffer.from("\r\n"));
+  
+  // Add description if provided
+  if (opts.description) {
+    const descPart = [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="description"`,
+      "",
+      opts.description,
+      "",
+    ].join("\r\n");
+    parts.push(Buffer.from(descPart));
+  }
+  
+  // Add tmid (thread) if provided
+  if (opts.tmid) {
+    const tmidPart = [
+      `--${boundary}`,
+      `Content-Disposition: form-data; name="tmid"`,
+      "",
+      opts.tmid,
+      "",
+    ].join("\r\n");
+    parts.push(Buffer.from(tmidPart));
+  }
+  
+  // End boundary
+  parts.push(Buffer.from(`--${boundary}--\r\n`));
+  
+  const body = Buffer.concat(parts);
+  
+  const res = await client.fetch(url, {
+    method: "POST",
+    headers: {
+      "X-Auth-Token": client.authToken,
+      "X-User-Id": client.userId,
+      "Content-Type": `multipart/form-data; boundary=${boundary}`,
+      "Content-Length": String(body.length),
+    },
+    body,
+  });
+  
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Rocket.Chat upload error ${res.status}: ${text}`);
+  }
+  
+  const data = await res.json() as { message: RocketChatUploadResult; success: boolean };
+  return data.message;
+}

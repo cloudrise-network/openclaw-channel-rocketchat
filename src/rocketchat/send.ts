@@ -2,6 +2,9 @@
  * Rocket.Chat message sending
  */
 
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
 import { resolveRocketChatAccount } from "./accounts.js";
 import {
   createRocketChatClient,
@@ -10,6 +13,7 @@ import {
   fetchRocketChatUserByUsername,
   normalizeRocketChatBaseUrl,
   postRocketChatMessage,
+  uploadRocketChatFile,
   type RocketChatUser,
 } from "./client.js";
 import { getRocketChatRuntime } from "../runtime.js";
@@ -45,6 +49,32 @@ function normalizeMessage(text: string, mediaUrl?: string): string {
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
+}
+
+function isLocalPath(value: string): boolean {
+  // Check if it's an absolute path or relative path (not a URL)
+  return value.startsWith("/") || value.startsWith("./") || value.startsWith("../") || /^[A-Za-z]:\\/.test(value);
+}
+
+/** Map file extensions to MIME types */
+function getMimeFromExt(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".pdf": "application/pdf",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+  };
+  return map[ext] ?? "application/octet-stream";
 }
 
 function parseRocketChatTarget(raw: string): RocketChatTarget {
@@ -165,7 +195,46 @@ export async function sendMessageRocketChat(
   let message = text?.trim() ?? "";
   const mediaUrl = opts.mediaUrl?.trim();
 
-  // For media, we just append the URL since Rocket.Chat will unfurl it
+  // Resolve room ID for uploads (channels need special handling)
+  const isChannel = target.kind === "channel";
+  const uploadRoomId = isChannel ? roomId : roomId;
+
+  // Handle local file uploads
+  if (mediaUrl && isLocalPath(mediaUrl)) {
+    try {
+      const fileBuffer = await fs.readFile(mediaUrl);
+      const fileName = path.basename(mediaUrl);
+      const mimeType = getMimeFromExt(mediaUrl);
+      
+      logger?.debug?.(`Uploading file to Rocket.Chat: ${fileName} (${mimeType}, ${fileBuffer.length} bytes)`);
+      
+      const upload = await uploadRocketChatFile(client, {
+        roomId: uploadRoomId,
+        file: fileBuffer,
+        fileName,
+        mimeType,
+        description: message || undefined,
+        tmid: opts.replyToId,
+      });
+      
+      core?.channel?.activity?.record?.({
+        channel: "rocketchat",
+        accountId: account.accountId,
+        direction: "outbound",
+      });
+      
+      return {
+        messageId: upload._id ?? "unknown",
+        roomId: upload.rid ?? uploadRoomId,
+      };
+    } catch (err) {
+      logger?.error?.(`Failed to upload file to Rocket.Chat: ${String(err)}`);
+      // Fall through to send as text message with path (degraded experience)
+      message = normalizeMessage(message, `[File: ${mediaUrl}]`);
+    }
+  }
+
+  // For HTTP URLs, append to message (Rocket.Chat will unfurl)
   if (mediaUrl && isHttpUrl(mediaUrl)) {
     message = normalizeMessage(message, mediaUrl);
   }
@@ -174,7 +243,6 @@ export async function sendMessageRocketChat(
     throw new Error("Rocket.Chat message is empty");
   }
 
-  const isChannel = target.kind === "channel";
   const post = await postRocketChatMessage(client, {
     roomId: isChannel ? undefined : roomId,
     channel: isChannel ? `#${target.name}` : undefined,
