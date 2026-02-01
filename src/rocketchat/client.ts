@@ -243,13 +243,16 @@ export type RocketChatUploadResult = {
 
 /**
  * Upload a file to a Rocket.Chat room.
- * Uses multipart/form-data via the rooms.upload endpoint.
+ * RC 8.x uses a two-step process:
+ *   1. POST /api/v1/rooms.media/{roomId} → returns file._id
+ *   2. POST /api/v1/chat.sendMessage with file reference
  */
 export async function uploadRocketChatFile(
   client: RocketChatClient,
   opts: RocketChatUploadOpts
 ): Promise<RocketChatUploadResult> {
-  const url = `${client.baseUrl}/api/v1/rooms.upload/${opts.roomId}`;
+  // Step 1: Upload file to rooms.media
+  const uploadUrl = `${client.baseUrl}/api/v1/rooms.media/${opts.roomId}`;
   
   // Build FormData manually for Node.js
   const boundary = `----OpenClawBoundary${Date.now()}`;
@@ -267,51 +270,69 @@ export async function uploadRocketChatFile(
   parts.push(opts.file);
   parts.push(Buffer.from("\r\n"));
   
-  // Add description if provided
-  if (opts.description) {
-    const descPart = [
-      `--${boundary}`,
-      `Content-Disposition: form-data; name="description"`,
-      "",
-      opts.description,
-      "",
-    ].join("\r\n");
-    parts.push(Buffer.from(descPart));
-  }
-  
-  // Add tmid (thread) if provided
-  if (opts.tmid) {
-    const tmidPart = [
-      `--${boundary}`,
-      `Content-Disposition: form-data; name="tmid"`,
-      "",
-      opts.tmid,
-      "",
-    ].join("\r\n");
-    parts.push(Buffer.from(tmidPart));
-  }
-  
   // End boundary
   parts.push(Buffer.from(`--${boundary}--\r\n`));
   
-  const body = Buffer.concat(parts);
+  const uploadBody = Buffer.concat(parts);
   
-  const res = await client.fetch(url, {
+  const uploadRes = await client.fetch(uploadUrl, {
     method: "POST",
     headers: {
       "X-Auth-Token": client.authToken,
       "X-User-Id": client.userId,
       "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      "Content-Length": String(body.length),
+      "Content-Length": String(uploadBody.length),
     },
-    body,
+    body: uploadBody,
   });
   
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Rocket.Chat upload error ${res.status}: ${text}`);
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => "");
+    throw new Error(`Rocket.Chat media upload error ${uploadRes.status}: ${text}`);
   }
   
-  const data = await res.json() as { message: RocketChatUploadResult; success: boolean };
-  return data.message;
+  const uploadData = await uploadRes.json() as { 
+    file: { _id: string; url: string }; 
+    success: boolean 
+  };
+  
+  if (!uploadData.success || !uploadData.file?._id) {
+    throw new Error("Rocket.Chat media upload failed: no file ID returned");
+  }
+  
+  // Step 2: Send message with file reference
+  const messagePayload = {
+    message: {
+      rid: opts.roomId,
+      msg: opts.description ?? "",
+      file: { _id: uploadData.file._id },
+      ...(opts.tmid && { tmid: opts.tmid }),
+    },
+  };
+  
+  const sendRes = await client.fetch(`${client.baseUrl}/api/v1/chat.sendMessage`, {
+    method: "POST",
+    headers: {
+      "X-Auth-Token": client.authToken,
+      "X-User-Id": client.userId,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messagePayload),
+  });
+  
+  if (!sendRes.ok) {
+    const text = await sendRes.text().catch(() => "");
+    throw new Error(`Rocket.Chat send message error ${sendRes.status}: ${text}`);
+  }
+  
+  const sendData = await sendRes.json() as { 
+    message: { _id: string; rid: string; ts: string }; 
+    success: boolean 
+  };
+  
+  return {
+    _id: sendData.message._id,
+    rid: sendData.message.rid,
+    ts: sendData.message.ts,
+  };
 }
