@@ -75,70 +75,83 @@ function chatType(kind: "dm" | "group" | "channel"): "direct" | "group" | "chann
   return "channel";
 }
 
-/** Image MIME types we can send to vision models */
-const IMAGE_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-]);
-
-function isImageMime(mime?: string): boolean {
-  if (!mime) return false;
-  return IMAGE_MIME_TYPES.has(mime.toLowerCase().split(";")[0].trim());
-}
-
 /**
- * Extract image URLs from Rocket.Chat message attachments/files.
+ * Extract file URLs from Rocket.Chat message attachments/files.
  * Returns full URLs that can be fetched with auth headers.
+ * Supports all file types - OpenClaw's media understanding handles type detection.
  */
-function extractImageUrls(
+function extractFileUrls(
   msg: IncomingMessage,
   baseUrl: string
-): Array<{ url: string; mimeType?: string }> {
-  const images: Array<{ url: string; mimeType?: string }> = [];
+): Array<{ url: string; mimeType?: string; fileName?: string }> {
+  const files: Array<{ url: string; mimeType?: string; fileName?: string }> = [];
 
-  // From attachments array (used for image_url references)
-  if (msg.attachments?.length) {
+  // From file/files (used for direct uploads) - check these first as they're more reliable
+  const fileList = msg.files ?? (msg.file ? [msg.file] : []);
+  for (const f of fileList) {
+    if (f._id && f.name) {
+      // Rocket.Chat file-upload URL pattern
+      const url = `${baseUrl}/file-upload/${f._id}/${encodeURIComponent(f.name)}`;
+      files.push({ url, mimeType: f.type, fileName: decodeURIComponent(f.name) });
+    }
+  }
+
+  // From attachments array (fallback for image_url references if no files found)
+  if (files.length === 0 && msg.attachments?.length) {
     for (const att of msg.attachments) {
       if (att.image_url) {
         const url = att.image_url.startsWith("http")
           ? att.image_url
           : `${baseUrl}${att.image_url.startsWith("/") ? "" : "/"}${att.image_url}`;
-        images.push({ url, mimeType: att.image_type });
+        files.push({ url, mimeType: att.image_type, fileName: att.title });
       }
     }
   }
 
-  // From file/files (used for direct uploads)
-  const files = msg.files ?? (msg.file ? [msg.file] : []);
-  for (const f of files) {
-    if (f._id && f.name && isImageMime(f.type)) {
-      // Rocket.Chat file-upload URL pattern
-      const url = `${baseUrl}/file-upload/${f._id}/${encodeURIComponent(f.name)}`;
-      images.push({ url, mimeType: f.type });
-    }
-  }
-
-  return images;
+  return files;
 }
 
-type FetchedImage = {
+type FetchedFile = {
   path: string;
   mimeType: string;
   cleanup: () => Promise<void>;
 };
 
+/** Map common MIME types to file extensions */
+function getExtensionFromMime(mimeType: string): string {
+  const mime = mimeType.toLowerCase().split(";")[0].trim();
+  const map: Record<string, string> = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "application/pdf": ".pdf",
+    "text/plain": ".txt",
+    "text/markdown": ".md",
+    "text/csv": ".csv",
+    "application/json": ".json",
+    "application/xml": ".xml",
+    "text/xml": ".xml",
+    "audio/mpeg": ".mp3",
+    "audio/wav": ".wav",
+    "audio/ogg": ".ogg",
+    "video/mp4": ".mp4",
+    "video/webm": ".webm",
+  };
+  return map[mime] ?? ".bin";
+}
+
 /**
- * Fetch an image from Rocket.Chat and save to a temp file.
+ * Fetch a file from Rocket.Chat and save to a temp file.
  * Returns the file path (OpenClaw expects file paths, not data URLs).
  */
-async function fetchImageToTempFile(
+async function fetchFileToTemp(
   url: string,
   authToken: string,
   userId: string,
-  mimeType?: string
-): Promise<FetchedImage | null> {
+  mimeType?: string,
+  fileName?: string
+): Promise<FetchedFile | null> {
   try {
     const res = await fetch(url, {
       headers: {
@@ -148,16 +161,15 @@ async function fetchImageToTempFile(
     });
     if (!res.ok) return null;
 
-    const contentType = mimeType ?? res.headers.get("content-type") ?? "image/png";
-    if (!isImageMime(contentType)) return null;
-
+    const contentType = mimeType ?? res.headers.get("content-type") ?? "application/octet-stream";
     const buffer = Buffer.from(await res.arrayBuffer());
     
-    // Determine extension from mime type
-    const ext = contentType.includes("png") ? ".png" 
-      : contentType.includes("gif") ? ".gif"
-      : contentType.includes("webp") ? ".webp"
-      : ".jpg";
+    // Determine extension from filename or mime type
+    let ext = getExtensionFromMime(contentType);
+    if (fileName) {
+      const fnExt = path.extname(fileName);
+      if (fnExt) ext = fnExt;
+    }
     
     const tempPath = path.join(os.tmpdir(), `openclaw-rc-${crypto.randomUUID()}${ext}`);
     await fs.writeFile(tempPath, buffer, { mode: 0o600 });
@@ -397,7 +409,7 @@ async function handleIncomingMessage(
     ? msg.ts.$date 
     : Date.parse(String(msg.ts));
 
-  // Extract image attachments (if any)
+  // Extract file attachments (images, PDFs, documents, etc.)
   const baseUrl = account.baseUrl;
   const authToken = account.authToken;
   const userId = account.userId;
@@ -405,13 +417,13 @@ async function handleIncomingMessage(
   // DEBUG: Log raw message to see what DDP sends
   logger.debug?.(`[RC DEBUG] Raw message: file=${JSON.stringify(msg.file)} files=${JSON.stringify(msg.files)} attachments=${JSON.stringify(msg.attachments?.slice(0, 2))}`);
   
-  const imageRefs = extractImageUrls(msg, baseUrl);
-  logger.debug?.(`[RC DEBUG] Extracted ${imageRefs.length} image refs`);
+  const fileRefs = extractFileUrls(msg, baseUrl);
+  logger.debug?.(`[RC DEBUG] Extracted ${fileRefs.length} file refs`);
   
   let rawBody = msg.msg.trim();
   
-  // Allow messages with only images (no text)
-  if (!rawBody && imageRefs.length === 0) return;
+  // Allow messages with only file attachments (no text)
+  if (!rawBody && fileRefs.length === 0) return;
 
   // Optional per-message overrides
   // - !thread  -> force reply in thread
@@ -424,8 +436,8 @@ async function handleIncomingMessage(
     forcedReplyMode = "channel";
     rawBody = rawBody.replace(/^!channel\b\s*/i, "").trim();
   }
-  // Skip if no text and no images
-  if (!rawBody && imageRefs.length === 0) return;
+  // Skip if no text and no file attachments
+  if (!rawBody && fileRefs.length === 0) return;
 
   // Determine reply mode
   const baseReplyMode: "thread" | "channel" | "auto" =
@@ -506,8 +518,8 @@ async function handleIncomingMessage(
     : undefined;
 
   // Format the envelope body
-  // For image-only messages, use a placeholder so the agent knows there's content
-  const effectiveRawBody = rawBody || (imageRefs.length > 0 ? "[image]" : "");
+  // For attachment-only messages, use a placeholder so the agent knows there's content
+  const effectiveRawBody = rawBody || (fileRefs.length > 0 ? "[attachment]" : "");
   const body = core.channel?.reply?.formatAgentEnvelope?.({
     channel: "Rocket.Chat",
     from: fromLabel,
@@ -551,23 +563,23 @@ async function handleIncomingMessage(
   const commandAuthorized = true;
   const bodyForAgent = body;
 
-  // Fetch images to temp files (OpenClaw expects file paths, not data URLs)
+  // Fetch files to temp (OpenClaw expects file paths, not data URLs)
   let mediaPaths: string[] | undefined;
   let mediaTypes: string[] | undefined;
-  const imageCleanups: Array<() => Promise<void>> = [];
+  const fileCleanups: Array<() => Promise<void>> = [];
   
-  if (imageRefs.length > 0) {
+  if (fileRefs.length > 0) {
     const fetched = await Promise.all(
-      imageRefs.map((ref) =>
-        fetchImageToTempFile(ref.url, authToken, userId, ref.mimeType)
+      fileRefs.map((ref) =>
+        fetchFileToTemp(ref.url, authToken, userId, ref.mimeType, ref.fileName)
       )
     );
-    const validImages = fetched.filter((img): img is FetchedImage => img !== null);
-    if (validImages.length > 0) {
-      mediaPaths = validImages.map((img) => img.path);
-      mediaTypes = validImages.map((img) => img.mimeType);
-      imageCleanups.push(...validImages.map((img) => img.cleanup));
-      logger.debug?.(`Fetched ${validImages.length} image(s) from Rocket.Chat attachments`);
+    const validFiles = fetched.filter((f): f is FetchedFile => f !== null);
+    if (validFiles.length > 0) {
+      mediaPaths = validFiles.map((f) => f.path);
+      mediaTypes = validFiles.map((f) => f.mimeType);
+      fileCleanups.push(...validFiles.map((f) => f.cleanup));
+      logger.debug?.(`Fetched ${validFiles.length} file(s) from Rocket.Chat attachments`);
     }
   }
 
@@ -699,8 +711,8 @@ async function handleIncomingMessage(
     });
   } finally {
     await stopTyping();
-    // Clean up temp image files
-    for (const cleanup of imageCleanups) {
+    // Clean up temp files
+    for (const cleanup of fileCleanups) {
       await cleanup();
     }
   }
