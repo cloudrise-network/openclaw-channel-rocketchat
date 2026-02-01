@@ -245,7 +245,7 @@ export type RocketChatUploadResult = {
  * Upload a file to a Rocket.Chat room.
  * RC 8.x uses a two-step process:
  *   1. POST /api/v1/rooms.media/{roomId} → returns file._id
- *   2. POST /api/v1/chat.sendMessage with file reference
+ *   2. POST /api/v1/rooms.mediaConfirm/{roomId}/{fileId} → creates displayable message
  */
 export async function uploadRocketChatFile(
   client: RocketChatClient,
@@ -300,39 +300,36 @@ export async function uploadRocketChatFile(
     throw new Error("Rocket.Chat media upload failed: no file ID returned");
   }
   
-  // Step 2: Send message with file reference
-  const messagePayload = {
-    message: {
-      rid: opts.roomId,
-      msg: opts.description ?? "",
-      file: { _id: uploadData.file._id },
-      ...(opts.tmid && { tmid: opts.tmid }),
-    },
-  };
+  // Step 2: Confirm media upload (generates thumbnail, dimensions, etc.)
+  const confirmUrl = `${client.baseUrl}/api/v1/rooms.mediaConfirm/${opts.roomId}/${uploadData.file._id}`;
   
-  const sendRes = await client.fetch(`${client.baseUrl}/api/v1/chat.sendMessage`, {
+  const confirmPayload: Record<string, string> = {};
+  if (opts.description) confirmPayload.msg = opts.description;
+  if (opts.tmid) confirmPayload.tmid = opts.tmid;
+  
+  const confirmRes = await client.fetch(confirmUrl, {
     method: "POST",
     headers: {
       "X-Auth-Token": client.authToken,
       "X-User-Id": client.userId,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(messagePayload),
+    body: JSON.stringify(confirmPayload),
   });
   
-  if (!sendRes.ok) {
-    const text = await sendRes.text().catch(() => "");
-    throw new Error(`Rocket.Chat send message error ${sendRes.status}: ${text}`);
+  if (!confirmRes.ok) {
+    const text = await confirmRes.text().catch(() => "");
+    throw new Error(`Rocket.Chat media confirm error ${confirmRes.status}: ${text}`);
   }
   
-  const sendData = await sendRes.json() as { 
+  const confirmData = await confirmRes.json() as { 
     message: { _id: string; rid: string; ts: string }; 
     success: boolean 
   };
   
   return {
-    _id: sendData.message._id,
-    rid: sendData.message.rid,
-    ts: sendData.message.ts,
+    _id: confirmData.message._id,
+    rid: confirmData.message.rid,
+    ts: confirmData.message.ts,
   };
 }
