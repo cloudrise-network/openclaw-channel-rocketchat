@@ -2,6 +2,11 @@
  * Rocket.Chat message monitor - handles incoming messages via Realtime API
  */
 
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import * as crypto from "node:crypto";
+
 import type {
   ChannelAccountSnapshot,
   OpenclawConfig,
@@ -118,15 +123,22 @@ function extractImageUrls(
   return images;
 }
 
+type FetchedImage = {
+  path: string;
+  mimeType: string;
+  cleanup: () => Promise<void>;
+};
+
 /**
- * Fetch an image from Rocket.Chat and return as base64 data URL.
+ * Fetch an image from Rocket.Chat and save to a temp file.
+ * Returns the file path (OpenClaw expects file paths, not data URLs).
  */
-async function fetchImageAsDataUrl(
+async function fetchImageToTempFile(
   url: string,
   authToken: string,
   userId: string,
   mimeType?: string
-): Promise<string | null> {
+): Promise<FetchedImage | null> {
   try {
     const res = await fetch(url, {
       headers: {
@@ -139,9 +151,24 @@ async function fetchImageAsDataUrl(
     const contentType = mimeType ?? res.headers.get("content-type") ?? "image/png";
     if (!isImageMime(contentType)) return null;
 
-    const buffer = await res.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString("base64");
-    return `data:${contentType};base64,${base64}`;
+    const buffer = Buffer.from(await res.arrayBuffer());
+    
+    // Determine extension from mime type
+    const ext = contentType.includes("png") ? ".png" 
+      : contentType.includes("gif") ? ".gif"
+      : contentType.includes("webp") ? ".webp"
+      : ".jpg";
+    
+    const tempPath = path.join(os.tmpdir(), `openclaw-rc-${crypto.randomUUID()}${ext}`);
+    await fs.writeFile(tempPath, buffer, { mode: 0o600 });
+    
+    return {
+      path: tempPath,
+      mimeType: contentType,
+      cleanup: async () => {
+        await fs.unlink(tempPath).catch(() => {});
+      },
+    };
   } catch {
     return null;
   }
@@ -374,7 +401,12 @@ async function handleIncomingMessage(
   const baseUrl = account.baseUrl;
   const authToken = account.authToken;
   const userId = account.userId;
+  
+  // DEBUG: Log raw message to see what DDP sends
+  logger.debug?.(`[RC DEBUG] Raw message: file=${JSON.stringify(msg.file)} files=${JSON.stringify(msg.files)} attachments=${JSON.stringify(msg.attachments?.slice(0, 2))}`);
+  
   const imageRefs = extractImageUrls(msg, baseUrl);
+  logger.debug?.(`[RC DEBUG] Extracted ${imageRefs.length} image refs`);
   
   let rawBody = msg.msg.trim();
   
@@ -485,34 +517,73 @@ async function handleIncomingMessage(
     body: effectiveRawBody,
   }) ?? effectiveRawBody;
 
-  // Rocket.Chat NOTE: Messages starting with "/" are treated as Rocket.Chat slash-commands.
-  // To make model switching usable from chat, we support an alternate syntax:
-  //   --model qwen3
-  //   --qwen3
-  // which we normalize into OpenClaw inline directives.
-  const commandBody = rawBody
+
+  // Inline directives (e.g. /model <ref>) should be parsed from the raw inbound text.
+  // Rocket.Chat users often type one-line directives like: "/model qwen3 hello".
+  // We split a leading directive into:
+  // - BodyForCommands: directive-only (so OpenClaw applies it)
+  // - BodyForAgent: the full envelope (so the agent retains context)
+  const normalizedRawBody = rawBody
+    // Shorthands (Rocket.Chat doesn't reliably allow leading `/...`)
+    .replace(/^\s*--opus\b/i, "/model opus")
+    .replace(/^\s*-opus\b/i, "/model opus")
+    .replace(/^\s*--oss\b/i, "/model oss")
+    .replace(/^\s*-oss\b/i, "/model oss")
     .replace(/^\s*--model\b/i, "/model")
+    .replace(/^\s*-model\b/i, "/model")
+    // Generic: `--foo` => `/foo` (we intentionally do NOT do this for single-dash to avoid
+    // accidental triggers on markdown bullets / negative numbers).
     .replace(/^\s*--/, "/");
 
-  // Fetch images as data URLs (authenticated fetch required for Rocket.Chat uploads)
-  let mediaUrls: string[] | undefined;
+  const bodyForCommands = (() => {
+    const t = normalizedRawBody.trim();
+    if (!t.startsWith("/")) return normalizedRawBody;
+
+    // IMPORTANT: Rocket.Chat users can't reliably send leading `/...` (Rocket.Chat treats it as an internal slash command).
+    // We allow `--...` as a stand-in for `/...`.
+    //
+    // For directives like `/think high`, `/verbose full`, `/elevated ask`, etc, we must preserve arguments.
+    // So: when the message starts with a directive/command, pass the *full first line* to the command parser.
+    // (OpenClaw will apply it as a directive-only message if the remaining body is empty.)
+    return t.split("\n", 1)[0].trim();
+  })();
+
+  const commandAuthorized = true;
+  const bodyForAgent = body;
+
+  // Fetch images to temp files (OpenClaw expects file paths, not data URLs)
+  let mediaPaths: string[] | undefined;
+  let mediaTypes: string[] | undefined;
+  const imageCleanups: Array<() => Promise<void>> = [];
+  
   if (imageRefs.length > 0) {
     const fetched = await Promise.all(
       imageRefs.map((ref) =>
-        fetchImageAsDataUrl(ref.url, authToken, userId, ref.mimeType)
+        fetchImageToTempFile(ref.url, authToken, userId, ref.mimeType)
       )
     );
-    mediaUrls = fetched.filter((u): u is string => u !== null);
-    if (mediaUrls.length > 0) {
-      logger.debug?.(`Fetched ${mediaUrls.length} image(s) from Rocket.Chat attachments`);
+    const validImages = fetched.filter((img): img is FetchedImage => img !== null);
+    if (validImages.length > 0) {
+      mediaPaths = validImages.map((img) => img.path);
+      mediaTypes = validImages.map((img) => img.mimeType);
+      imageCleanups.push(...validImages.map((img) => img.cleanup));
+      logger.debug?.(`Fetched ${validImages.length} image(s) from Rocket.Chat attachments`);
     }
   }
 
-  // Finalize inbound context
   const ctxPayload = core.channel?.reply?.finalizeInboundContext?.({
     Body: body,
+    BodyForAgent: bodyForAgent,
     RawBody: rawBody,
-    CommandBody: commandBody,
+    CommandBody: bodyForCommands,
+    // Be explicit: directives (/model, /qwen, etc.) should be parsed from the raw inbound text.
+    BodyForCommands: bodyForCommands,
+    // Hint to OpenClaw that this is plain text (not a platform-native slash command).
+    CommandSource: "text",
+
+    // Allow inline directives like /model ...
+    CommandAuthorized: commandAuthorized,
+
     From: isGroup ? `rocketchat:room:${roomId}` : `rocketchat:${senderId}`,
     To: `rocketchat:${roomId}`,
     SessionKey: route.sessionKey,
@@ -529,15 +600,15 @@ async function handleIncomingMessage(
     OriginatingChannel: "rocketchat",
     OriginatingTo: `rocketchat:${roomId}`,
 
-    // Image attachments (fetched as base64 data URLs)
-    MediaUrls: mediaUrls?.length ? mediaUrls : undefined,
+    // Image attachments (fetched to temp files)
+    MediaPaths: mediaPaths?.length ? mediaPaths : undefined,
+    MediaTypes: mediaTypes?.length ? mediaTypes : undefined,
   });
 
   if (!ctxPayload) {
     logger.error?.(`Failed to finalize inbound context for message ${msg._id}`);
     return;
   }
-
   // Record inbound session
   if (storePath) {
     await core.channel?.session?.recordInboundSession?.({
@@ -628,5 +699,9 @@ async function handleIncomingMessage(
     });
   } finally {
     await stopTyping();
+    // Clean up temp image files
+    for (const cleanup of imageCleanups) {
+      await cleanup();
+    }
   }
 }
