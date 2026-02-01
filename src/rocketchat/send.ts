@@ -13,6 +13,7 @@ import {
   fetchRocketChatUserByUsername,
   normalizeRocketChatBaseUrl,
   postRocketChatMessage,
+  reactRocketChatMessage,
   uploadRocketChatFile,
   type RocketChatUser,
 } from "./client.js";
@@ -260,4 +261,59 @@ export async function sendMessageRocketChat(
     messageId: post._id ?? "unknown",
     roomId: post.rid ?? roomId,
   };
+}
+
+export type RocketChatReactOpts = {
+  accountId?: string;
+  shouldReact?: boolean;
+};
+
+/**
+ * React to a Rocket.Chat message with an emoji.
+ * @param messageId - The message ID to react to
+ * @param emoji - Emoji name (e.g., "thumbsup", ":rocket:", "🚀")
+ */
+export async function reactMessageRocketChat(
+  messageId: string,
+  emoji: string,
+  opts: RocketChatReactOpts = {}
+): Promise<void> {
+  const core = getRocketChatRuntime();
+  const logger = core?.logging?.getChildLogger?.({ module: "rocketchat" });
+  const cfg = core?.config?.loadConfig?.() ?? {};
+
+  const account = resolveRocketChatAccount({ cfg, accountId: opts.accountId });
+
+  const authToken = account.authToken?.trim();
+  if (!authToken) {
+    throw new Error(
+      `Rocket.Chat authToken missing for account "${account.accountId}"`
+    );
+  }
+
+  const userId = account.userId?.trim();
+  if (!userId) {
+    throw new Error(
+      `Rocket.Chat userId missing for account "${account.accountId}"`
+    );
+  }
+
+  const baseUrl = normalizeRocketChatBaseUrl(account.baseUrl);
+  if (!baseUrl) {
+    throw new Error(
+      `Rocket.Chat baseUrl missing for account "${account.accountId}"`
+    );
+  }
+
+  const client = createRocketChatClient({ baseUrl, userId, authToken });
+
+  logger?.debug?.(`Reacting to message ${messageId} with ${emoji}`);
+
+  await reactRocketChatMessage(client, messageId, emoji, opts.shouldReact ?? true);
+
+  core?.channel?.activity?.record?.({
+    channel: "rocketchat",
+    accountId: account.accountId,
+    direction: "outbound",
+  });
 }

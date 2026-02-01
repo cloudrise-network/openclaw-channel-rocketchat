@@ -15,7 +15,7 @@ import {
 } from "./rocketchat/accounts.js";
 import { normalizeRocketChatBaseUrl } from "./rocketchat/client.js";
 import { monitorRocketChatProvider } from "./rocketchat/monitor.js";
-import { sendMessageRocketChat } from "./rocketchat/send.js";
+import { reactMessageRocketChat, sendMessageRocketChat } from "./rocketchat/send.js";
 import { getRocketChatRuntime } from "./runtime.js";
 
 const meta = {

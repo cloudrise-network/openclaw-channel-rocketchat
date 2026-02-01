@@ -145,6 +145,10 @@ Then restart the gateway.
 
 ## Features
 
+- **Inbound attachments**: receives images, PDFs/documents, and audio; forwards them to OpenClaw for vision/document understanding and transcription.
+- **Outbound attachments**: can send local file paths as real Rocket.Chat uploads (inline previews when supported).
+- **Reactions**: can react to messages with emoji (via `chat.react`).
+
 - **File attachments**: receives images, PDFs, documents, audio uploaded to Rocket.Chat and passes them to the vision model.
 - **Model prefix**: honors `messages.responsePrefix` (e.g. `({model}) `) so replies can include the model name.
 

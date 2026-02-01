@@ -33,13 +33,23 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Basic secret scan (fail fast)
+      - name: Basic secret + hardcoded-domain scan (fail fast)
         shell: bash
         run: |
           set -euo pipefail
+
+          # Scan only tracked files (avoids .git metadata and avoids matching this workflow itself)
+          FILES=$(git ls-files | grep -v '^\.github/workflows/publish\.yml$')
+
           # extremely small guardrail; real protection is token rotation + reviews
-          if grep -RIn --exclude-dir=node_modules --exclude=package-lock.json -E "npm_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-|X-Auth-Token\s*:\s*|authToken\s*=\s*\"" .; then
+          if echo "$FILES" | xargs -r grep -nE "npm_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-|X-Auth-Token\s*:\s*|authToken\s*=\s*\""; then
             echo "Potential secret pattern detected. Refusing to publish."
+            exit 1
+          fi
+
+          # Guardrail: fail publish if Cloudrise prod domains are hardcoded in tracked files
+          if echo "$FILES" | xargs -r grep -nE "chat\.cloudrise\.net|cloudrise\.net"; then
+            echo "Hardcoded domain detected. Refusing to publish (use config/env instead)."
             exit 1
           fi
 
