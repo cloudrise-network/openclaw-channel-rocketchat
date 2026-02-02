@@ -84,6 +84,13 @@ function parseRocketChatTarget(raw: string): RocketChatTarget {
 
   const lower = trimmed.toLowerCase();
 
+  // rocketchat:ID (OpenClaw sometimes uses this format)
+  if (lower.startsWith("rocketchat:")) {
+    const id = trimmed.slice("rocketchat:".length).trim();
+    if (!id) throw new Error("Room id is required for Rocket.Chat sends");
+    return { kind: "room", id };
+  }
+
   // room:ID format
   if (lower.startsWith("room:")) {
     const id = trimmed.slice("room:".length).trim();
@@ -113,8 +120,8 @@ function parseRocketChatTarget(raw: string): RocketChatTarget {
   }
 
   // Default to channel name (could also be room ID)
-  if (trimmed.includes("/") || /^[A-Za-z0-9]{17}$/.test(trimmed)) {
-    // Looks like a room ID
+  // Room IDs vary by deployment; commonly 17-char tokens or 24-char Mongo ObjectIds, but allow growth.
+  if (trimmed.includes("/") || /^[A-Za-z0-9]{17,64}$/.test(trimmed)) {
     return { kind: "room", id: trimmed };
   }
 

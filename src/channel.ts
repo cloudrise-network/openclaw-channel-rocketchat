@@ -52,17 +52,38 @@ function formatAllowEntry(entry: string): string {
 
 function looksLikeRocketChatTargetId(value: string): boolean {
   const trimmed = value.trim();
-  // Rocket.Chat room IDs are typically 17-character alphanumeric
-  if (/^[A-Za-z0-9]{17}$/.test(trimmed)) return true;
+  const lower = trimmed.toLowerCase();
+
+  // Rocket.Chat room IDs vary by deployment.
+  // Common lengths are 17 (token-ish) and 24 (Mongo ObjectId), but allow growth.
+  if (/^[A-Za-z0-9]{17,64}$/.test(trimmed)) return true;
+
   if (trimmed.startsWith("#") || trimmed.startsWith("@")) return true;
-  if (trimmed.toLowerCase().startsWith("room:")) return true;
-  if (trimmed.toLowerCase().startsWith("user:")) return true;
+  if (lower.startsWith("room:")) return true;
+  if (lower.startsWith("user:")) return true;
+
+  // OpenClaw may provide channel-local targets like "rocketchat:<rid>"
+  if (lower.startsWith("rocketchat:")) {
+    const rest = trimmed.slice("rocketchat:".length).trim();
+    if (/^[A-Za-z0-9]{17,64}$/.test(rest)) return true;
+  }
+
   return false;
 }
 
 function normalizeRocketChatMessagingTarget(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "";
+
+  // Normalize OpenClaw-style prefixed targets to Rocket.Chat canonical forms.
+  // e.g. "rocketchat:<rid>" -> "room:<rid>"
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("rocketchat:")) {
+    const rest = trimmed.slice("rocketchat:".length).trim();
+    if (/^[A-Za-z0-9]{17,64}$/.test(rest)) return `room:${rest}`;
+    return rest;
+  }
+
   return trimmed;
 }
 
