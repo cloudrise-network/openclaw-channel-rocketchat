@@ -149,6 +149,33 @@ export async function fetchRocketChatChannels(
   return res.channels;
 }
 
+/**
+ * Fetch a channel's info by name (for resolving room ID).
+ */
+export async function fetchRocketChatChannelByName(
+  client: RocketChatClient,
+  channelName: string
+): Promise<RocketChatRoom | null> {
+  try {
+    const res = await rcFetch<{ channel: RocketChatRoom; success: boolean }>(
+      client,
+      `/api/v1/channels.info?roomName=${encodeURIComponent(channelName)}`
+    );
+    return res.channel ?? null;
+  } catch {
+    // Try groups (private channels) if channel lookup fails
+    try {
+      const res = await rcFetch<{ group: RocketChatRoom; success: boolean }>(
+        client,
+        `/api/v1/groups.info?roomName=${encodeURIComponent(channelName)}`
+      );
+      return res.group ?? null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 export type RocketChatSubscription = {
   _id: string;
   rid: string;

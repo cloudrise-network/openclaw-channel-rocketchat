@@ -9,6 +9,7 @@ import { resolveRocketChatAccount } from "./accounts.js";
 import {
   createRocketChatClient,
   createRocketChatDirectMessage,
+  fetchRocketChatChannelByName,
   fetchRocketChatMe,
   fetchRocketChatUserByUsername,
   normalizeRocketChatBaseUrl,
@@ -203,9 +204,20 @@ export async function sendMessageRocketChat(
   let message = text?.trim() ?? "";
   const mediaUrl = opts.mediaUrl?.trim();
 
-  // Resolve room ID for uploads (channels need special handling)
+  // Resolve actual room ID for uploads (channels need to be looked up)
   const isChannel = target.kind === "channel";
-  const uploadRoomId = isChannel ? roomId : roomId;
+  let uploadRoomId = roomId;
+  
+  if (isChannel && mediaUrl && isLocalPath(mediaUrl)) {
+    // For channel uploads, we need the actual room _id, not the #name
+    const channelInfo = await fetchRocketChatChannelByName(client, target.name);
+    if (channelInfo?._id) {
+      uploadRoomId = channelInfo._id;
+      logger?.debug?.(`Resolved channel "${target.name}" to room ID: ${uploadRoomId}`);
+    } else {
+      logger?.warn?.(`Could not resolve channel "${target.name}" to room ID, upload may fail`);
+    }
+  }
 
   // Handle local file uploads
   if (mediaUrl && isLocalPath(mediaUrl)) {
@@ -214,7 +226,7 @@ export async function sendMessageRocketChat(
       const fileName = path.basename(mediaUrl);
       const mimeType = getMimeFromExt(mediaUrl);
       
-      logger?.debug?.(`Uploading file to Rocket.Chat: ${fileName} (${mimeType}, ${fileBuffer.length} bytes)`);
+      logger?.debug?.(`Uploading file to Rocket.Chat: ${fileName} (${mimeType}, ${fileBuffer.length} bytes) to room ${uploadRoomId}`);
       
       const upload = await uploadRocketChatFile(client, {
         roomId: uploadRoomId,
