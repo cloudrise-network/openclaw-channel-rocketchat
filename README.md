@@ -16,7 +16,7 @@ New fine-grained per-room user access control:
 - `rooms.<roomId>.canInteract` — static list of users/roles who can interact
 - `rooms.<roomId>.roomApprovers` — who can approve others for this room
 - `rooms.<roomId>.responseMode` — "always" or "mention-only"
-- Room-level commands: `room-approve @user`, `room-deny @user`, `room-list`
+- Room-level commands: `--room-approve @user`, `--room-deny @user`, `--room-list`
 
 > ⚠️ **Beta**: Per-room ACL is functional but should be tested before production use.
 
@@ -24,7 +24,7 @@ New fine-grained per-room user access control:
 
 New `groupPolicy: "owner-approval"` for controlling which channels the bot responds in:
 - Bot sends "pending approval" message on first message in unapproved channels
-- Approve with `approve room:ROOMID`, deny with `deny room:ROOMID`
+- Approve with `--approve room:ROOMID`, deny with `--deny room:ROOMID`
 
 > ⚠️ **Beta**: Channel approval flow is functional but should be tested before production use.
 
@@ -33,7 +33,7 @@ New `groupPolicy: "owner-approval"` for controlling which channels the bot respo
 New `dmPolicy: "owner-approval"` for in-channel approval flow (no CLI needed):
 - Configure `ownerApproval.notifyChannels` for where to receive requests
 - Configure `ownerApproval.approvers` with usernames or Rocket.Chat roles (`role:admin`, `role:moderator`)
-- Commands: `approve @user`, `deny @user`, `pending`
+- Commands: `--approve @user`, `--deny @user`, `--pending`
 
 ### v0.3.0 — DM pairing support
 
@@ -435,17 +435,19 @@ channels:
 **Flow:**
 1. Unknown user sends a DM
 2. Bot notifies owner channel: `"🔔 New DM request from @user123"`
-3. Owner replies: `approve @user123` or `deny @user123`
+3. Owner replies: `--approve @user123` or `--deny @user123`
 4. Requester gets notified: `"✅ You've been approved!"`
 5. Future messages are processed normally
 
 **Commands (in owner channel or DM to bot):**
 ```
-approve @user123           # approve a user
-deny @user123              # deny a user
-approve room:GENERAL       # approve a room
-pending                    # list pending requests
+--approve @user123           # approve a user
+--deny @user123              # deny a user
+--approve room:GENERAL       # approve a room
+--pending                    # list pending requests
 ```
+
+> 💡 **Note:** Rocket.Chat has built-in `/slash` commands that may intercept messages starting with `/`. Use `--` prefix instead (e.g., `--approve` not `/approve`).
 
 ---
 
@@ -469,7 +471,7 @@ channels:
 **With `groupPolicy: "owner-approval"`:**
 - When invited to a new channel, first message triggers approval request
 - Approvers receive: `"🔔 Bot invited to #channel-name by @user"`
-- Approve with: `approve room:ROOMID`
+- Approve with: `--approve room:ROOMID`
 
 ---
 
@@ -570,9 +572,9 @@ channels:
 
 **Room-level commands** (usable by `roomApprovers`):
 ```
-room-approve @alice     # Approve alice for THIS room only
-room-deny @alice        # Remove alice from this room's approved list
-room-list               # Show who's approved in this room
+--room-approve @alice     # Approve alice for THIS room only
+--room-deny @alice        # Remove alice from this room's approved list
+--room-list               # Show who's approved in this room
 ```
 
 **How it works:**
