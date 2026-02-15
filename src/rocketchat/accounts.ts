@@ -10,6 +10,20 @@ type RocketChatRoomConfig = {
   requireMention?: boolean;
   /** Optional per-room override. Use the room rid (e.g. GENERAL), not the channel name. */
   replyMode?: RocketChatReplyMode;
+  
+  // === Per-Room User Access Control ===
+  
+  /** Response mode: "always" responds to all approved users, "mention-only" only when @mentioned */
+  responseMode?: "always" | "mention-only";
+  
+  /** Who can interact with the bot in this room (static config) */
+  canInteract?: string[];
+  
+  /** Who can approve/deny users for THIS room (room-level approvers) */
+  roomApprovers?: string[];
+  
+  /** What happens when non-approved user @mentions bot: "ignore" or "reply" with unauthorized message */
+  onMentionUnauthorized?: "ignore" | "reply";
 };
 
 export type OwnerApprovalConfig = {

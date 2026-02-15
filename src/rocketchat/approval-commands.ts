@@ -7,12 +7,23 @@
  * - approve room:GENERAL
  * - list pending
  * - pending
+ * 
+ * Room-level commands:
+ * - room-approve @user123
+ * - room-deny @user123
+ * - room-list
  */
 
 export type ApprovalCommand = 
   | { action: "approve"; targets: string[] }
   | { action: "deny"; targets: string[] }
   | { action: "list" }
+  | null;
+
+export type RoomCommand =
+  | { action: "room-approve"; targets: string[] }
+  | { action: "room-deny"; targets: string[] }
+  | { action: "room-list" }
   | null;
 
 /**
@@ -207,4 +218,99 @@ export function buildDeniedMessage(target: string, type: "dm" | "room"): string 
   } else {
     return `❌ This room was not approved. Goodbye!`;
   }
+}
+
+// === Room-Level Commands ===
+
+/**
+ * Parse a room-level command from a message.
+ * These control per-room user access (not global approval).
+ * 
+ * Commands:
+ * - room-approve @user
+ * - room-deny @user
+ * - room-list
+ */
+export function parseRoomCommand(text: string): RoomCommand {
+  const trimmed = text.trim();
+  const lower = trimmed.toLowerCase();
+  
+  // room-list
+  if (lower === "room-list" || lower === "room list") {
+    return { action: "room-list" };
+  }
+  
+  // room-approve @user
+  const approveMatch = trimmed.match(/^room[- ]?approve\s+(.+)$/i);
+  if (approveMatch) {
+    const targets = parseUserTargets(approveMatch[1]);
+    if (targets.length > 0) {
+      return { action: "room-approve", targets };
+    }
+  }
+  
+  // room-deny @user
+  const denyMatch = trimmed.match(/^room[- ]?deny\s+(.+)$/i);
+  if (denyMatch) {
+    const targets = parseUserTargets(denyMatch[1]);
+    if (targets.length > 0) {
+      return { action: "room-deny", targets };
+    }
+  }
+  
+  // room-remove @user (alias for deny)
+  const removeMatch = trimmed.match(/^room[- ]?remove\s+(.+)$/i);
+  if (removeMatch) {
+    const targets = parseUserTargets(removeMatch[1]);
+    if (targets.length > 0) {
+      return { action: "room-deny", targets };
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Parse user targets (for room commands - users only, not rooms).
+ */
+function parseUserTargets(input: string): string[] {
+  const parts = input.split(/[\s,]+/).filter(Boolean);
+  const targets: string[] = [];
+  
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    
+    // @username
+    if (trimmed.startsWith("@")) {
+      targets.push(trimmed);
+      continue;
+    }
+    
+    // Plain username
+    targets.push(`@${trimmed}`);
+  }
+  
+  return targets;
+}
+
+/**
+ * Build the "not authorized" message for non-approved users who @mention the bot.
+ */
+export function buildNotAuthorizedMessage(): string {
+  return `🔒 You're not authorized to interact with me in this room. Ask a room admin to approve you.`;
+}
+
+/**
+ * Build the room user approved message.
+ */
+export function buildRoomUserApprovedMessage(username: string): string {
+  return `✅ @${username} can now interact with me in this room.`;
+}
+
+/**
+ * Build the room user denied/removed message.
+ */
+export function buildRoomUserDeniedMessage(username: string): string {
+  return `❌ @${username} has been removed from this room's approved users.`;
 }

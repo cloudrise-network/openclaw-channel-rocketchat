@@ -424,6 +424,146 @@ pending                    # list pending requests
 
 ---
 
+### Channel/Room Approval (groupPolicy)
+
+Control which channels the bot responds in:
+
+```yaml
+channels:
+  rocketchat:
+    groupPolicy: "owner-approval"  # or "open" | "allowlist" | "disabled"
+```
+
+| Policy | Behavior |
+|--------|----------|
+| `open` | **(Default)** Bot responds in any channel it's added to. |
+| `owner-approval` | Bot sends "pending approval" on first message in new channels. |
+| `allowlist` | Only channels in `groupAllowFrom` receive responses. |
+| `disabled` | Bot ignores all channel messages. |
+
+**With `groupPolicy: "owner-approval"`:**
+- When invited to a new channel, first message triggers approval request
+- Approvers receive: `"🔔 Bot invited to #channel-name by @user"`
+- Approve with: `approve room:ROOMID`
+
+---
+
+### 🔑 Auto-Approval (Important!)
+
+**Approvers and notify channels are automatically allowed through access gates** — no manual pre-approval needed!
+
+| `ownerApproval` Entry | DM Gate | Channel/Group Gate |
+|-----------------------|---------|-------------------|
+| `approvers: ["@user"]` | ✅ Auto-allowed | ✅ Auto-allowed (in any room) |
+| `notifyChannels: ["room:ID"]` | N/A | ✅ Auto-allowed |
+
+**Minimal recommended config (no lockout risk):**
+
+```yaml
+channels:
+  rocketchat:
+    dmPolicy: "owner-approval"
+    groupPolicy: "owner-approval"
+    
+    ownerApproval:
+      enabled: true
+      approvers:
+        - "@yourusername"           # You can DM the bot + approve in any room
+      notifyChannels:
+        - "room:YOUR_MAIN_ROOM_ID"  # This room is auto-approved
+      notifyOnApprove: true
+      notifyOnDeny: true
+```
+
+That's it! With this config:
+- ✅ You can DM the bot (you're an approver)
+- ✅ Your main room works (it's a notify channel)
+- ✅ Approval commands work in your main room
+- 🔒 Everyone else needs approval
+
+---
+
+### Manual Pre-Approval (Optional)
+
+If you need to pre-approve additional users or rooms that aren't approvers/notifyChannels:
+
+**In config:**
+```yaml
+channels:
+  rocketchat:
+    allowFrom:           # Pre-approved DM users
+      - "@alice"
+      - "@bob"
+    groupAllowFrom:      # Pre-approved rooms
+      - "room:GENERAL"
+      - "#support"
+```
+
+**Or via files:**
+```bash
+# Pre-approve DM users
+echo '{"version":1,"entries":["alice","bob"]}' > ~/.openclaw/credentials/rocketchat-allowFrom.json
+
+# Pre-approve rooms
+echo '{"version":1,"entries":["GENERAL"]}' > ~/.openclaw/credentials/rocketchat-rooms-allowFrom.json
+```
+
+---
+
+### Per-Room User Access Control
+
+Control which users can interact with the bot **within each approved room**:
+
+```yaml
+channels:
+  rocketchat:
+    rooms:
+      GENERAL:
+        # Response mode for approved users
+        responseMode: "mention-only"  # or "always" (default)
+        
+        # Who can interact (static list)
+        canInteract:
+          - "@alice"
+          - "@bob"
+          - "role:admin"
+          - "role:moderator"
+        
+        # Who can approve/deny users for THIS room
+        roomApprovers:
+          - "role:owner"          # Room owners
+          - "role:moderator"
+          - "@marshal"
+        
+        # When non-approved user @mentions bot
+        onMentionUnauthorized: "ignore"  # or "reply" (sends "not authorized")
+      
+      SUPPORT:
+        # No restrictions - everyone in the room can interact
+        responseMode: "always"
+```
+
+**Room-level commands** (usable by `roomApprovers`):
+```
+room-approve @alice     # Approve alice for THIS room only
+room-deny @alice        # Remove alice from this room's approved list
+room-list               # Show who's approved in this room
+```
+
+**How it works:**
+1. Room gets global approval (via `groupPolicy`)
+2. Per-room user check: is sender in `canInteract`, `roomApprovers`, or dynamically approved?
+3. If not approved:
+   - Silent ignore (unless `onMentionUnauthorized: "reply"`)
+4. If approved:
+   - Check `responseMode` — respond always or only when @mentioned
+
+**Storage:** `~/.openclaw/credentials/rocketchat-room-users.json`
+
+**Note:** Global approvers (`ownerApproval.approvers`) can interact in ANY room, regardless of per-room settings.
+
+---
+
 ### CLI-Based Pairing
 
 If you prefer CLI-based approval:

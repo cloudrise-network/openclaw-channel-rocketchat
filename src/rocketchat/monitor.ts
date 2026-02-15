@@ -33,18 +33,31 @@ import {
 
 import {
   parseApprovalCommand,
+  parseRoomCommand,
   buildApprovalRequestMessage,
   buildWaitingMessage,
   buildApprovedMessage,
   buildDeniedMessage,
+  buildNotAuthorizedMessage,
+  buildRoomUserApprovedMessage,
+  buildRoomUserDeniedMessage,
   formatApprovalRequest,
 } from "./approval-commands.js";
+
+import {
+  getRoomApprovedUsers,
+  isRoomUserApproved,
+  addRoomUser,
+  removeRoomUser,
+  formatRoomUsersList,
+} from "./room-users.js";
 
 import {
   isApprover,
   isNotifyChannel,
   getDmNotifyTargets,
   fetchUserRoles,
+  fetchUserByUsername,
 } from "./roles.js";
 
 import { getRocketChatRuntime } from "../runtime.js";
@@ -593,6 +606,328 @@ async function handleIncomingMessage(
     }
   }
 
+  // === Access Control for Groups/Channels ===
+  // Check groupPolicy before processing messages from groups/channels
+  if (isGroup) {
+    const groupPolicy = account.config.groupPolicy ?? "open"; // Default to "open" for Rocket.Chat
+    const roomId = msg.rid;
+    const roomName = room?.name ?? room?.fname ?? roomId;
+    const senderId = msg.u._id;
+    const senderUsername = msg.u.username;
+    const senderName = msg.u.name ?? senderUsername;
+
+    // If disabled, silently drop all group messages
+    if (groupPolicy === "disabled") {
+      logger.debug?.(`[${account.accountId}] Group message from ${roomName} blocked (groupPolicy=disabled)`);
+      return;
+    }
+
+    // If not "open", check if room is allowed
+    if (groupPolicy !== "open") {
+      // Normalize helper
+      const normalizeRoomEntry = (entry: string): string =>
+        entry
+          .trim()
+          .replace(/^(rocketchat|room):/i, "")
+          .replace(/^#/, "")
+          .toLowerCase();
+
+      // Read allowed rooms from store + config
+      const storeAllowFrom = await readChannelAllowFromStore("rocketchat-rooms").catch(() => []);
+      const configAllowFrom = (account.config.groupAllowFrom ?? []).map(String).map(normalizeRoomEntry);
+      const allAllowFrom = [...new Set([...storeAllowFrom, ...configAllowFrom])];
+
+      // Check if room is allowed
+      const normalizedRoomId = normalizeRoomEntry(roomId);
+      const normalizedRoomName = roomName ? normalizeRoomEntry(roomName) : null;
+      
+      // Auto-allow notifyChannels (they need to receive approval notifications)
+      const ownerConfigForCheck = account.config.ownerApproval;
+      const notifyChannels = ownerConfigForCheck?.notifyChannels ?? [];
+      const isNotifyChannelRoom = isNotifyChannel(roomId, roomName, notifyChannels);
+      
+      const isAllowed = isNotifyChannelRoom || allAllowFrom.some(
+        (entry) =>
+          entry === "*" ||
+          entry === normalizedRoomId ||
+          (normalizedRoomName && entry === normalizedRoomName)
+      );
+
+      if (!isAllowed) {
+        // If "allowlist" mode, block without approval
+        if (groupPolicy === "allowlist") {
+          logger.debug?.(`[${account.accountId}] Group message from ${roomName} blocked (groupPolicy=allowlist, not in groupAllowFrom)`);
+          return;
+        }
+
+        // If "owner-approval" mode, create approval request
+        if (groupPolicy === "owner-approval") {
+          const ownerConfig = account.config.ownerApproval;
+          if (!ownerConfig?.enabled) {
+            logger.debug?.(`[${account.accountId}] Group message from ${roomName} blocked (groupPolicy=owner-approval but ownerApproval not enabled)`);
+            return;
+          }
+
+          // Approvers are allowed through in any room
+          const approvers = ownerConfig.approvers ?? [];
+          if (approvers.length > 0) {
+            const restClient = createRocketChatClient({
+              baseUrl: account.baseUrl!,
+              userId: account.userId!,
+              authToken: account.authToken!,
+            });
+            if (await isApprover(restClient, senderId, senderUsername, approvers)) {
+              logger.debug?.(`[${account.accountId}] Group message from ${roomName} allowed (sender ${senderUsername} is approver)`);
+              // Fall through to normal message processing
+            } else {
+              // Not an approver — check for pending room approval
+              try {
+                const existing = await findPendingApproval(roomId, "room");
+                if (existing?.status === "approved") {
+                  // Room was approved, add to allowed list
+                  await addToAllowFrom(roomId, "rocketchat-rooms");
+                  // Fall through to normal message processing
+                } else if (!existing) {
+                  // Create new approval request for this room
+                  const approval = await createApproval({
+                    type: "room",
+                    targetId: roomId,
+                    targetName: roomName,
+                    requesterId: senderId,
+                    requesterName: senderName,
+                    requesterUsername: senderUsername,
+                    replyRoomId: roomId,
+                    timeoutMs: ownerConfig.timeout ? ownerConfig.timeout * 1000 : undefined,
+                  });
+
+                  // Notify approvers
+                  const notifyChannels = ownerConfig.notifyChannels ?? [];
+                  const notifyMessage = buildApprovalRequestMessage({
+                    type: "room",
+                    targetId: roomId,
+                    targetName: roomName,
+                    requesterName: senderName,
+                    requesterUsername: senderUsername,
+                  });
+
+                  for (const channel of notifyChannels) {
+                    try {
+                      if (channel.startsWith("@")) {
+                        await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, {
+                          accountId: account.accountId,
+                        });
+                      } else if (channel.startsWith("room:")) {
+                        await sendMessageRocketChat(channel, notifyMessage, {
+                          accountId: account.accountId,
+                        });
+                      } else {
+                        await sendMessageRocketChat(`room:${channel}`, notifyMessage, {
+                          accountId: account.accountId,
+                        });
+                      }
+                    } catch (err) {
+                      logger.error?.(`[${account.accountId}] Failed to send room approval notification to ${channel}: ${String(err)}`);
+                    }
+                  }
+
+                  // Notify the room that it's pending approval
+                  await sendMessageRocketChat(`room:${roomId}`, "⏳ This room is pending approval. The owner has been notified.", {
+                    accountId: account.accountId,
+                  });
+
+                  logger.info?.(`[${account.accountId}] Room approval request created for ${roomName}`);
+                }
+                // If pending, silently drop (already notified)
+                return;
+              } catch (err) {
+                logger.error?.(`[${account.accountId}] Failed to handle room approval flow: ${String(err)}`);
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // === Per-Room User Access Control ===
+  // After room is approved, check if this specific user can interact
+  if (isGroup) {
+    const roomId = msg.rid;
+    const roomName = room?.name ?? room?.fname ?? roomId;
+    const senderId = msg.u._id;
+    const senderUsername = msg.u.username;
+    const senderName = msg.u.name ?? senderUsername;
+    
+    // Get room-specific config
+    const roomConfig = (account.config.rooms?.[roomId] ?? {}) as {
+      responseMode?: "always" | "mention-only";
+      canInteract?: string[];
+      roomApprovers?: string[];
+      onMentionUnauthorized?: "ignore" | "reply";
+    };
+    
+    // Check if room has per-user access control configured
+    const hasRoomAccessControl = roomConfig.canInteract?.length || roomConfig.roomApprovers?.length;
+    
+    if (hasRoomAccessControl) {
+      // Check if sender is a room approver (they always have access)
+      const roomApprovers = roomConfig.roomApprovers ?? [];
+      let isRoomApprover = false;
+      
+      if (roomApprovers.length > 0) {
+        const restClient = createRocketChatClient({
+          baseUrl: account.baseUrl!,
+          userId: account.userId!,
+          authToken: account.authToken!,
+        });
+        isRoomApprover = await isApprover(restClient, senderId, senderUsername, roomApprovers);
+      }
+      
+      // Check if sender is in canInteract list (static config)
+      const canInteract = roomConfig.canInteract ?? [];
+      let isInCanInteract = false;
+      
+      if (canInteract.length > 0) {
+        const restClient = createRocketChatClient({
+          baseUrl: account.baseUrl!,
+          userId: account.userId!,
+          authToken: account.authToken!,
+        });
+        isInCanInteract = await isApprover(restClient, senderId, senderUsername, canInteract);
+      }
+      
+      // Check if sender is in dynamic room users list
+      const isInRoomUsers = await isRoomUserApproved(roomId, senderId, senderUsername);
+      
+      // Also check if sender is a global approver (they can interact anywhere)
+      const globalApprovers = account.config.ownerApproval?.approvers ?? [];
+      let isGlobalApprover = false;
+      if (globalApprovers.length > 0) {
+        const restClient = createRocketChatClient({
+          baseUrl: account.baseUrl!,
+          userId: account.userId!,
+          authToken: account.authToken!,
+        });
+        isGlobalApprover = await isApprover(restClient, senderId, senderUsername, globalApprovers);
+      }
+      
+      const canUserInteract = isRoomApprover || isInCanInteract || isInRoomUsers || isGlobalApprover;
+      
+      // Check if this is a room command from a room approver
+      if (isRoomApprover || isGlobalApprover) {
+        const roomCommand = parseRoomCommand(msg.msg);
+        
+        if (roomCommand) {
+          logger.debug?.(`[${account.accountId}] Room command from ${senderUsername}: ${JSON.stringify(roomCommand)}`);
+          
+          if (roomCommand.action === "room-list") {
+            const users = await getRoomApprovedUsers(roomId);
+            await sendMessageRocketChat(`room:${roomId}`, formatRoomUsersList(users), {
+              accountId: account.accountId,
+            });
+            return;
+          }
+          
+          if (roomCommand.action === "room-approve") {
+            const results: string[] = [];
+            
+            for (const target of roomCommand.targets) {
+              const username = target.replace(/^@/, "");
+              
+              // Look up user by username
+              const restClient = createRocketChatClient({
+                baseUrl: account.baseUrl!,
+                userId: account.userId!,
+                authToken: account.authToken!,
+              });
+              
+              try {
+                const userInfo = await fetchUserByUsername(restClient, username);
+                if (userInfo) {
+                  const { added, existing } = await addRoomUser({
+                    roomId,
+                    userId: userInfo.userId,
+                    username: userInfo.username,
+                    approvedBy: senderUsername ?? senderId,
+                  });
+                  
+                  if (added) {
+                    results.push(buildRoomUserApprovedMessage(username));
+                  } else if (existing) {
+                    results.push(`ℹ️ @${username} is already approved for this room.`);
+                  }
+                } else {
+                  results.push(`⚠️ User not found: ${username}`);
+                }
+              } catch (err) {
+                results.push(`⚠️ Failed to approve ${username}: ${String(err)}`);
+              }
+            }
+            
+            await sendMessageRocketChat(`room:${roomId}`, results.join("\n"), {
+              accountId: account.accountId,
+            });
+            return;
+          }
+          
+          if (roomCommand.action === "room-deny") {
+            const results: string[] = [];
+            
+            for (const target of roomCommand.targets) {
+              const username = target.replace(/^@/, "");
+              
+              const { removed } = await removeRoomUser({
+                roomId,
+                username,
+              });
+              
+              if (removed) {
+                results.push(buildRoomUserDeniedMessage(username));
+              } else {
+                results.push(`⚠️ @${username} was not in this room's approved list.`);
+              }
+            }
+            
+            await sendMessageRocketChat(`room:${roomId}`, results.join("\n"), {
+              accountId: account.accountId,
+            });
+            return;
+          }
+        }
+      }
+      
+      // If user can't interact, check response mode and handle accordingly
+      if (!canUserInteract) {
+        const responseMode = roomConfig.responseMode ?? "always";
+        const onMentionUnauthorized = roomConfig.onMentionUnauthorized ?? "ignore";
+        
+        // Check if bot was @mentioned
+        const botUsername = account.userId; // This should be resolved to username
+        const wasMentioned = msg.mentions?.some((m: { _id: string }) => m._id === account.userId);
+        
+        if (wasMentioned && onMentionUnauthorized === "reply") {
+          await sendMessageRocketChat(`room:${roomId}`, buildNotAuthorizedMessage(), {
+            accountId: account.accountId,
+          });
+        }
+        
+        logger.debug?.(`[${account.accountId}] User ${senderUsername} not authorized in room ${roomName}`);
+        return;
+      }
+      
+      // User can interact - check responseMode
+      const responseMode = roomConfig.responseMode ?? "always";
+      if (responseMode === "mention-only") {
+        const wasMentioned = msg.mentions?.some((m: { _id: string }) => m._id === account.userId);
+        if (!wasMentioned) {
+          logger.debug?.(`[${account.accountId}] Ignoring message from ${senderUsername} in ${roomName} (mention-only mode)`);
+          return;
+        }
+      }
+    }
+  }
+
   // === Owner Approval Command Handling ===
   // Check if this message is an approval command from an approver
   const ownerConfig = account.config.ownerApproval;
@@ -661,7 +996,9 @@ async function handleIncomingMessage(
             if (approval) {
               // Add to allowlist if approved
               if (command.action === "approve") {
-                await addToAllowFrom(approval.targetId);
+                // Use different store for rooms vs users
+                const storeId = approval.type === "room" ? "rocketchat-rooms" : "rocketchat";
+                await addToAllowFrom(approval.targetId, storeId);
               }
 
               // Notify the requester

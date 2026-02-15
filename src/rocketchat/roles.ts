@@ -17,6 +17,40 @@ const roleCache = new Map<string, { roles: UserRoles; fetchedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * Fetch user info by username from Rocket.Chat.
+ */
+export async function fetchUserByUsername(
+  client: RocketChatClient,
+  username: string
+): Promise<UserRoles | null> {
+  try {
+    const response = await fetch(`${client.baseUrl}/api/v1/users.info?username=${encodeURIComponent(username)}`, {
+      headers: {
+        "X-Auth-Token": client.authToken,
+        "X-User-Id": client.userId,
+      },
+    });
+    
+    if (!response.ok) {
+      return null;
+    }
+    
+    const data = await response.json();
+    const user = data.user;
+    
+    if (!user) return null;
+    
+    return {
+      userId: user._id,
+      username: user.username,
+      roles: Array.isArray(user.roles) ? user.roles : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Fetch user info including roles from Rocket.Chat.
  */
 export async function fetchUserRoles(

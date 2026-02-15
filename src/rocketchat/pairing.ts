@@ -46,8 +46,8 @@ function resolvePairingPath(): string {
   return path.join(resolveCredentialsDir(), `${CHANNEL_ID}-pairing.json`);
 }
 
-function resolveAllowFromPath(): string {
-  return path.join(resolveCredentialsDir(), `${CHANNEL_ID}-allowFrom.json`);
+function resolveAllowFromPath(storeId: string = CHANNEL_ID): string {
+  return path.join(resolveCredentialsDir(), `${storeId}-allowFrom.json`);
 }
 
 function generatePairingCode(): string {
@@ -82,9 +82,9 @@ async function writePairingStore(store: PairingStore): Promise<void> {
   await fs.writeFile(filePath, JSON.stringify(store, null, 2), { mode: 0o600 });
 }
 
-async function readAllowFromStore(): Promise<AllowFromStore> {
+async function readAllowFromStore(storeId: string = CHANNEL_ID): Promise<AllowFromStore> {
   try {
-    const data = await fs.readFile(resolveAllowFromPath(), "utf-8");
+    const data = await fs.readFile(resolveAllowFromPath(storeId), "utf-8");
     const parsed = JSON.parse(data);
     return {
       version: parsed.version ?? 1,
@@ -95,17 +95,18 @@ async function readAllowFromStore(): Promise<AllowFromStore> {
   }
 }
 
-async function writeAllowFromStore(store: AllowFromStore): Promise<void> {
+async function writeAllowFromStore(store: AllowFromStore, storeId: string = CHANNEL_ID): Promise<void> {
   await ensureDir(resolveCredentialsDir());
-  const filePath = resolveAllowFromPath();
+  const filePath = resolveAllowFromPath(storeId);
   await fs.writeFile(filePath, JSON.stringify(store, null, 2), { mode: 0o600 });
 }
 
 /**
  * Read the allowFrom list from the pairing store.
+ * @param storeId - Store identifier (default: "rocketchat", use "rocketchat-rooms" for room allowlist)
  */
-export async function readChannelAllowFromStore(): Promise<string[]> {
-  const store = await readAllowFromStore();
+export async function readChannelAllowFromStore(storeId: string = CHANNEL_ID): Promise<string[]> {
+  const store = await readAllowFromStore(storeId);
   return store.entries;
 }
 
@@ -189,12 +190,14 @@ export function buildPairingReply(params: {
 
 /**
  * Add an entry to the allowFrom store (called when pairing is approved).
+ * @param entry - The entry to add (user ID or room ID)
+ * @param storeId - Store identifier (default: "rocketchat", use "rocketchat-rooms" for room allowlist)
  */
-export async function addToAllowFrom(entry: string): Promise<void> {
-  const store = await readAllowFromStore();
+export async function addToAllowFrom(entry: string, storeId: string = CHANNEL_ID): Promise<void> {
+  const store = await readAllowFromStore(storeId);
   const normalized = entry.toLowerCase().trim();
   if (!store.entries.includes(normalized)) {
     store.entries.push(normalized);
-    await writeAllowFromStore(store);
+    await writeAllowFromStore(store, storeId);
   }
 }
