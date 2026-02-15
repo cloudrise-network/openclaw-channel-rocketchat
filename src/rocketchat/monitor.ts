@@ -519,79 +519,74 @@ async function handleIncomingMessage(
             return;
           }
 
-          try {
-            // Check if there's already a pending or approved request
-            const existing = await findPendingApproval(senderId, "dm");
-            if (existing?.status === "approved") {
-              // Already approved, let the message through (will be added to allowlist)
-              await addToAllowFrom(senderId);
-              // Continue processing below
+          // Approvers are always allowed through — they need DM access
+          // to send approval commands (approve/deny/list) and to chat.
+          const approvers = ownerConfig.approvers ?? [];
+          if (approvers.length > 0) {
+            const restClient = createRocketChatClient({
+              baseUrl: account.baseUrl!,
+              userId: account.userId!,
+              authToken: account.authToken!,
+            });
+            if (await isApprover(restClient, senderId, senderUsername, approvers)) {
+              logger.debug?.(`[${account.accountId}] DM from ${senderUsername ?? senderId} allowed (sender is approver)`);
+              // Fall through to normal message processing (skip access control)
             } else {
-              // Create pending approval
-              const approval = await createApproval({
-                type: "dm",
-                targetId: senderId,
-                targetName: senderName,
-                targetUsername: senderUsername,
-                requesterId: senderId,
-                requesterName: senderName,
-                requesterUsername: senderUsername,
-                replyRoomId: msg.rid,
-                timeoutMs: ownerConfig.timeout ? ownerConfig.timeout * 1000 : undefined,
-              });
+              // Not an approver — run the approval request flow
+              try {
+                const existing = await findPendingApproval(senderId, "dm");
+                if (existing?.status === "approved") {
+                  await addToAllowFrom(senderId);
+                  // Fall through to normal message processing
+                } else {
+                  const approval = await createApproval({
+                    type: "dm",
+                    targetId: senderId,
+                    targetName: senderName,
+                    targetUsername: senderUsername,
+                    requesterId: senderId,
+                    requesterName: senderName,
+                    requesterUsername: senderUsername,
+                    replyRoomId: msg.rid,
+                    timeoutMs: ownerConfig.timeout ? ownerConfig.timeout * 1000 : undefined,
+                  });
 
-              // Only notify if this is a new request
-              if (approval.createdAt === approval.lastNotifiedAt) {
-                // Send notification to owner channels
-                const notifyChannels = ownerConfig.notifyChannels ?? [];
-                const notifyMessage = buildApprovalRequestMessage({
-                  type: "dm",
-                  targetId: senderId,
-                  targetName: senderName,
-                  targetUsername: senderUsername,
-                });
+                  if (approval.createdAt === approval.lastNotifiedAt) {
+                    const notifyChannels = ownerConfig.notifyChannels ?? [];
+                    const notifyMessage = buildApprovalRequestMessage({
+                      type: "dm",
+                      targetId: senderId,
+                      targetName: senderName,
+                      targetUsername: senderUsername,
+                    });
 
-                for (const channel of notifyChannels) {
-                  try {
-                    if (channel.startsWith("@")) {
-                      // DM to user
-                      await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, {
-                        accountId: account.accountId,
-                      });
-                    } else if (channel.startsWith("room:")) {
-                      // Room by ID
-                      await sendMessageRocketChat(channel, notifyMessage, {
-                        accountId: account.accountId,
-                      });
-                    } else if (channel.startsWith("#")) {
-                      // Room by name (need to resolve)
-                      await sendMessageRocketChat(`room:${channel.slice(1)}`, notifyMessage, {
-                        accountId: account.accountId,
-                      });
-                    } else {
-                      // Plain room ID or name
-                      await sendMessageRocketChat(`room:${channel}`, notifyMessage, {
-                        accountId: account.accountId,
-                      });
+                    for (const channel of notifyChannels) {
+                      try {
+                        if (channel.startsWith("@")) {
+                          await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
+                        } else if (channel.startsWith("room:")) {
+                          await sendMessageRocketChat(channel, notifyMessage, { accountId: account.accountId });
+                        } else if (channel.startsWith("#")) {
+                          await sendMessageRocketChat(`room:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
+                        } else {
+                          await sendMessageRocketChat(`room:${channel}`, notifyMessage, { accountId: account.accountId });
+                        }
+                      } catch (err) {
+                        logger.error?.(`[${account.accountId}] Failed to send approval notification to ${channel}: ${String(err)}`);
+                      }
                     }
-                  } catch (err) {
-                    logger.error?.(`[${account.accountId}] Failed to send approval notification to ${channel}: ${String(err)}`);
+
+                    await sendMessageRocketChat(`room:${msg.rid}`, buildWaitingMessage(), { accountId: account.accountId });
+                    logger.info?.(`[${account.accountId}] Approval request created for ${senderUsername ?? senderId}`);
                   }
+
+                  return; // Don't process the message yet
                 }
-
-                // Tell the requester they're waiting
-                await sendMessageRocketChat(`room:${msg.rid}`, buildWaitingMessage(), {
-                  accountId: account.accountId,
-                });
-
-                logger.info?.(`[${account.accountId}] Approval request created for ${senderUsername ?? senderId}`);
+              } catch (err) {
+                logger.error?.(`[${account.accountId}] Failed to handle owner-approval flow: ${String(err)}`);
+                return;
               }
-
-              return; // Don't process the message yet
             }
-          } catch (err) {
-            logger.error?.(`[${account.accountId}] Failed to handle owner-approval flow: ${String(err)}`);
-            return;
           }
         }
       }

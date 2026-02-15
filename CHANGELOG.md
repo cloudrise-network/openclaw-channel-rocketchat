@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] - 2026-02-15
+
+### Fixed
+
+- **Approver bypass**: Approvers are now correctly allowed through the DM access gate to send approval commands. Previously, approvers would get stuck in the "pending approval" flow when DMing the bot.
+
 ## [0.4.0] - 2026-02-15
 
 ### Added
