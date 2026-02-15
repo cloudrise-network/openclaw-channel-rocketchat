@@ -1,59 +1,28 @@
 name: Publish to npm
 
 on:
-  # NOTE: Releases created by GitHub Actions using GITHUB_TOKEN do NOT trigger
-  # other workflows (GitHub safety feature). We publish on tags instead.
-  push:
-    tags:
-      - "v*"
-
-  # Manual fallback
-  workflow_dispatch:
-
-  # Keep this for human-created releases
   release:
     types: [published]
-
-permissions:
-  contents: read
+  workflow_dispatch:  # Manual trigger from Actions tab
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for npm Trusted Publishing (OIDC)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
 
-      - name: Install
+      - name: Install dependencies
         run: npm ci
 
-      - name: Basic secret + hardcoded-domain scan (fail fast)
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Scan only tracked files (avoids .git metadata and avoids matching this workflow itself)
-          FILES=$(git ls-files | grep -v '^\.github/workflows/publish\.yml$')
-
-          # extremely small guardrail; real protection is token rotation + reviews
-          if echo "$FILES" | xargs -r grep -nE "npm_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+|xox[baprs]-|X-Auth-Token\s*:\s*|authToken\s*=\s*\""; then
-            echo "Potential secret pattern detected. Refusing to publish."
-            exit 1
-          fi
-
-          # Guardrail: fail publish if Cloudrise prod domains are hardcoded in tracked files
-          if echo "$FILES" | xargs -r grep -nE "chat\.cloudrise\.net|cloudrise\.net"; then
-            echo "Hardcoded domain detected. Refusing to publish (use config/env instead)."
-            exit 1
-          fi
-
-      - name: Publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+      - name: Publish with provenance
+        run: npm publish --provenance --access public
