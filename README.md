@@ -10,6 +10,10 @@ Neutral, self-host friendly Rocket.Chat channel plugin for **OpenClaw** (Cloudri
 
 ## Upgrade notices
 
+### v0.3.0 — DM pairing support
+
+Added support for OpenClaw's DM pairing flow. Default behavior unchanged (`dmPolicy: "open"`), but you can now enable `dmPolicy: "pairing"` for per-user approval.
+
 ### v0.2.0+ — plugin id change
 
 The plugin id changed from `rocketchat` to `openclaw-channel-rocketchat` to align with OpenClaw's package-derived id convention and eliminate the "plugin id mismatch" warning.
@@ -349,6 +353,54 @@ npm publish
 ```
 
 (There is also a GitHub Actions workflow in `.github/workflows/publish.yml`.)
+
+## DM Access Control (Pairing)
+
+The plugin supports OpenClaw's standard DM pairing flow for controlling who can message the bot.
+
+### DM Policies
+
+```yaml
+channels:
+  rocketchat:
+    # DM access policy (default: "open")
+    dmPolicy: "pairing"  # or "open" | "allowlist" | "disabled"
+    
+    # Pre-approved users (used with "pairing" and "allowlist")
+    allowFrom:
+      - "@admin"
+      - "user123"
+```
+
+| Policy | Behavior |
+|--------|----------|
+| `open` | **(Default)** All DMs allowed. Rocket.Chat server-level auth is the only gate. |
+| `pairing` | Unknown senders get a pairing code. Owner approves via CLI. |
+| `allowlist` | Only users in `allowFrom` can DM. Others are silently blocked. |
+| `disabled` | All DMs blocked. |
+
+### Pairing Flow
+
+When `dmPolicy: "pairing"`:
+
+1. Unknown user sends a DM
+2. Bot replies with a pairing code: `"Pairing required. Code: ABC12345"`
+3. Owner approves via CLI:
+   ```bash
+   openclaw pairing list rocketchat
+   openclaw pairing approve rocketchat ABC12345
+   ```
+4. User is added to allowlist and notified: `"✅ You've been approved!"`
+5. Future messages are processed normally
+
+### Why is the default "open"?
+
+Unlike public platforms (Telegram, WhatsApp, Signal), Rocket.Chat is typically:
+- Self-hosted with authenticated users
+- Behind organizational access controls
+- Already requires user accounts to message
+
+So **server-level authentication acts as the primary gate**. Use `pairing` or `allowlist` if you need per-user approval on top of that.
 
 ## Security
 

@@ -93,10 +93,24 @@ export const rocketChatPlugin: ChannelPlugin<ResolvedRocketChatAccount> = {
     ...meta,
   },
   pairing: {
-    idLabel: "rocketchatUserId",
+    idLabel: "Rocket.Chat User ID",
     normalizeAllowEntry,
-    notifyApproval: async ({ id }) => {
-      console.log(`[rocketchat] User ${id} approved for pairing`);
+    notifyApproval: async ({ cfg, id }) => {
+      // Notify the user that they've been approved
+      // The id is the user's Rocket.Chat user ID
+      try {
+        const account = resolveRocketChatAccount({ cfg, accountId: undefined });
+        if (account.authToken && account.userId && account.baseUrl) {
+          await sendMessageRocketChat(`user:${id}`, "✅ You've been approved! You can now send messages.", {
+            accountId: account.accountId,
+          });
+          console.log(`[rocketchat] User ${id} approved and notified`);
+        } else {
+          console.log(`[rocketchat] User ${id} approved (notification skipped - account not configured)`);
+        }
+      } catch (err) {
+        console.error(`[rocketchat] Failed to notify user ${id} of approval: ${String(err)}`);
+      }
     },
   },
   capabilities: {

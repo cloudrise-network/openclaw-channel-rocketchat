@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0] - 2026-02-15
+
+### Added
+
+- **DM Pairing support**: Implements OpenClaw's standard pairing flow for DM access control
+  - `dmPolicy: "pairing"` - unknown senders get a code, owner approves via `openclaw pairing approve rocketchat <code>`
+  - `dmPolicy: "allowlist"` - only pre-configured `allowFrom` users can DM
+  - `dmPolicy: "disabled"` - block all DMs
+  - `dmPolicy: "open"` (default) - all DMs allowed (Rocket.Chat server auth is the gate)
+- **Pairing notifications**: When a user is approved, they receive a confirmation message
+- **Full config schema**: Added JSON Schema validation for all config options
+
+### Changed
+
+- `pairing.idLabel` now shows "Rocket.Chat User ID" in CLI output
+- Improved logging for pairing requests and access control decisions
+
 ## [0.2.0] - 2026-02-15
 
 ### ⚠️ Breaking Changes

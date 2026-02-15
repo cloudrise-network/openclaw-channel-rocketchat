@@ -15,6 +15,12 @@ import type {
 
 import { createReplyPrefixContext } from "openclaw/plugin-sdk";
 
+import {
+  readChannelAllowFromStore,
+  upsertChannelPairingRequest,
+  buildPairingReply,
+} from "./pairing.js";
+
 import { getRocketChatRuntime } from "../runtime.js";
 import { resolveRocketChatAccount, type ResolvedRocketChatAccount } from "./accounts.js";
 import {
@@ -403,6 +409,86 @@ async function handleIncomingMessage(
 
   const roomRid = room?._id ?? msg.rid;
   const roomCfg = (account.config.rooms?.[roomRid] ?? {}) as { replyMode?: "thread" | "channel" | "auto" };
+
+  // === Pairing / Access Control for DMs ===
+  // Check dmPolicy before processing DMs (groups use separate groupPolicy)
+  if (!isGroup) {
+    const dmPolicy = account.config.dmPolicy ?? "open"; // Default to "open" for Rocket.Chat (server-level auth)
+    const senderId = msg.u._id;
+    const senderUsername = msg.u.username;
+    const senderName = msg.u.name ?? senderUsername;
+
+    // If disabled, silently drop
+    if (dmPolicy === "disabled") {
+      logger.debug?.(`[${account.accountId}] DM from ${senderUsername ?? senderId} blocked (dmPolicy=disabled)`);
+      return;
+    }
+
+    // If not "open", check allowlist
+    if (dmPolicy !== "open") {
+      // Normalize helper (matches channel.ts)
+      const normalizeAllowEntry = (entry: string): string =>
+        entry
+          .trim()
+          .replace(/^(rocketchat|user):/i, "")
+          .replace(/^@/, "")
+          .toLowerCase();
+
+      // Read allowlist from pairing store + config
+      const storeAllowFrom = await readChannelAllowFromStore("rocketchat").catch(() => []);
+      const configAllowFrom = (account.config.allowFrom ?? []).map(String).map(normalizeAllowEntry);
+      const allAllowFrom = [...new Set([...storeAllowFrom, ...configAllowFrom])];
+
+      // Check if sender is allowed
+      const normalizedSenderId = normalizeAllowEntry(senderId);
+      const normalizedUsername = senderUsername ? normalizeAllowEntry(senderUsername) : null;
+      const isAllowed = allAllowFrom.some(
+        (entry) =>
+          entry === "*" ||
+          entry === normalizedSenderId ||
+          (normalizedUsername && entry === normalizedUsername)
+      );
+
+      if (!isAllowed) {
+        // If "allowlist" mode, block without pairing
+        if (dmPolicy === "allowlist") {
+          logger.debug?.(`[${account.accountId}] DM from ${senderUsername ?? senderId} blocked (dmPolicy=allowlist, not in allowFrom)`);
+          return;
+        }
+
+        // If "pairing" mode, create pairing request and send code
+        if (dmPolicy === "pairing") {
+          try {
+            const { code, created } = await upsertChannelPairingRequest({
+              channel: "rocketchat",
+              id: senderId,
+              meta: {
+                name: senderName ?? undefined,
+                username: senderUsername ?? undefined,
+              },
+            });
+
+            if (created) {
+              logger.info?.(`[${account.accountId}] Pairing request created for ${senderUsername ?? senderId}, code: ${code}`);
+              const reply = buildPairingReply({
+                channel: "rocketchat",
+                idLine: `Rocket.Chat user: ${senderUsername ? `@${senderUsername}` : senderId}`,
+                code,
+              });
+              await sendMessageRocketChat(`room:${msg.rid}`, reply, {
+                accountId: account.accountId,
+              });
+            } else {
+              logger.debug?.(`[${account.accountId}] Pairing request already exists for ${senderUsername ?? senderId}`);
+            }
+          } catch (err) {
+            logger.error?.(`[${account.accountId}] Failed to create pairing request: ${String(err)}`);
+          }
+          return;
+        }
+      }
+    }
+  }
 
   // Get timestamp
   const ts = typeof msg.ts === "object" && "$date" in msg.ts 

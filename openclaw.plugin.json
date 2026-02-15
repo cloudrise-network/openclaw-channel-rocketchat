@@ -2,11 +2,54 @@
   "id": "openclaw-channel-rocketchat",
   "name": "Rocket.Chat",
   "description": "Rocket.Chat channel plugin for OpenClaw",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "channels": ["rocketchat"],
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
-    "properties": {}
+    "additionalProperties": true,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "baseUrl": { "type": "string" },
+      "userId": { "type": "string" },
+      "authToken": { "type": "string" },
+      "authTokenFile": { "type": "string" },
+      "dmPolicy": {
+        "type": "string",
+        "enum": ["open", "pairing", "allowlist", "disabled"],
+        "default": "open",
+        "description": "DM access policy. 'open' allows all (server-level auth), 'pairing' requires approval, 'allowlist' requires pre-configured allowFrom, 'disabled' blocks all DMs."
+      },
+      "allowFrom": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "User IDs or usernames allowed to DM (used with 'pairing' and 'allowlist' policies)."
+      },
+      "groupPolicy": {
+        "type": "string",
+        "enum": ["open", "allowlist", "disabled"],
+        "default": "open"
+      },
+      "groupAllowFrom": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "replyMode": {
+        "type": "string",
+        "enum": ["thread", "channel", "auto"],
+        "default": "thread"
+      },
+      "typingDelayMs": {
+        "type": "number",
+        "default": 1000
+      },
+      "accounts": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "rooms": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
   }
 }
