@@ -10,6 +10,14 @@ Neutral, self-host friendly Rocket.Chat channel plugin for **OpenClaw** (Cloudri
 
 ## Upgrade notices
 
+### v0.6.1 — Reaction-based approval
+
+Approve or deny requests by reacting to notification messages:
+- ✅ or 👍 to approve
+- ❌ or 👎 to deny
+
+No need to type commands — just react! Works for both DM and room approvals.
+
 ### v0.6.0 — Per-room access control (beta)
 
 New fine-grained per-room user access control:

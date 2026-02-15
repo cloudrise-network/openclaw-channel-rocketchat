@@ -167,10 +167,13 @@ export function buildApprovalRequestMessage(params: {
       ``,
       `User: ${who}`,
       ``,
-      `Reply:`,
-      `• \`approve ${params.targetUsername ?? params.targetId}\` — allow this user`,
-      `• \`deny ${params.targetUsername ?? params.targetId}\` — block this user`,
-      `• \`pending\` — list all pending requests`,
+      `**React to this message:**`,
+      `• ✅ to approve`,
+      `• ❌ to deny`,
+      ``,
+      `Or reply:`,
+      `• \`--approve ${params.targetUsername ?? params.targetId}\``,
+      `• \`--deny ${params.targetUsername ?? params.targetId}\``,
     ].join("\n");
   } else {
     const room = params.targetName ?? params.targetId;
@@ -183,10 +186,13 @@ export function buildApprovalRequestMessage(params: {
       `Room: #${room}`,
       `Invited by: ${who}`,
       ``,
-      `Reply:`,
-      `• \`approve room:${params.targetId}\` — allow this room`,
-      `• \`deny room:${params.targetId}\` — leave this room`,
-      `• \`pending\` — list all pending requests`,
+      `**React to this message:**`,
+      `• ✅ to approve`,
+      `• ❌ to deny`,
+      ``,
+      `Or reply:`,
+      `• \`--approve room:${params.targetId}\``,
+      `• \`--deny room:${params.targetId}\``,
     ].join("\n");
   }
 }

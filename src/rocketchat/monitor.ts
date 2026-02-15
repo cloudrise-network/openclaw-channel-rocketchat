@@ -28,6 +28,8 @@ import {
   findPendingApproval,
   approveRequest,
   denyRequest,
+  updateApprovalNotifyMessages,
+  findApprovalByMessageId,
   type PendingApproval,
 } from "./approval-queue.js";
 
@@ -88,6 +90,7 @@ export type MonitorRocketChatOpts = {
 
 const RECENT_MESSAGE_TTL_MS = 5 * 60_000;
 const recentMessageIds = new Set<string>();
+const processedReactions = new Set<string>(); // Track processed approval reactions
 let cleanupTimer: NodeJS.Timeout | null = null;
 
 function startCleanupTimer(): void {
@@ -96,6 +99,10 @@ function startCleanupTimer(): void {
     // Simple cleanup - just clear old messages periodically
     if (recentMessageIds.size > 1000) {
       recentMessageIds.clear();
+    }
+    // Also cleanup processed reactions (keep from growing indefinitely)
+    if (processedReactions.size > 500) {
+      processedReactions.clear();
     }
   }, RECENT_MESSAGE_TTL_MS);
 }
@@ -118,6 +125,41 @@ function chatType(kind: "dm" | "group" | "channel"): "direct" | "group" | "chann
   if (kind === "dm") return "direct";
   if (kind === "group") return "group";
   return "channel";
+}
+
+/**
+ * Check if a username is an approver.
+ * Looks up the user by username and checks against approver patterns.
+ */
+async function checkIsApprover(
+  username: string,
+  approverPatterns: string[],
+  account: ResolvedRocketChatAccount
+): Promise<boolean> {
+  if (approverPatterns.length === 0) return false;
+  
+  const baseUrl = normalizeRocketChatBaseUrl(account.baseUrl);
+  if (!baseUrl || !account.authToken || !account.userId) return false;
+  
+  const client = createRocketChatClient({
+    baseUrl,
+    userId: account.userId,
+    authToken: account.authToken,
+  });
+  
+  // First check simple @username match (no API call needed)
+  const normalizedUsername = username.toLowerCase();
+  for (const pattern of approverPatterns) {
+    if (pattern.startsWith("@") && pattern.slice(1).toLowerCase() === normalizedUsername) {
+      return true;
+    }
+  }
+  
+  // Need to fetch user for role checks or userId matches
+  const user = await fetchUserByUsername(client, username);
+  if (!user) return false;
+  
+  return isApprover(client, user._id, username, approverPatterns);
 }
 
 /**
@@ -433,11 +475,94 @@ async function handleIncomingMessage(
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void,
   setTypingFn?: (roomId: string, isTyping: boolean, meta?: Record<string, unknown>) => Promise<void>
 ): Promise<void> {
-  // Skip duplicates
-  if (isDuplicate(msg._id)) return;
+  // Skip duplicates (but allow reaction updates on tracked approval messages)
+  const hasReactions = msg.reactions && Object.keys(msg.reactions).length > 0;
+  if (isDuplicate(msg._id) && !hasReactions) return;
 
   // Skip own messages
   if (msg.u._id === account.userId) return;
+
+  // === Reaction-based approval handling ===
+  // Check if this message has reactions and is a tracked approval notification
+  if (hasReactions) {
+    try {
+      const approval = await findApprovalByMessageId(msg._id);
+      if (approval && approval.status === "pending") {
+        // Check for approve/deny reactions
+        const approveEmojis = [":white_check_mark:", ":heavy_check_mark:", ":thumbsup:", ":+1:"];
+        const denyEmojis = [":x:", ":negative_squared_cross_mark:", ":thumbsdown:", ":-1:"];
+        
+        // Get owner approval config to check if reactor is an approver
+        const ownerConfig = account.config.ownerApproval ?? {};
+        const approvers = ownerConfig.approvers ?? [];
+        
+        for (const [emoji, reaction] of Object.entries(msg.reactions ?? {})) {
+          const normalizedEmoji = emoji.toLowerCase();
+          const isApproveEmoji = approveEmojis.some(e => normalizedEmoji.includes(e.replace(/:/g, "")));
+          const isDenyEmoji = denyEmojis.some(e => normalizedEmoji.includes(e.replace(/:/g, "")));
+          
+          if (!isApproveEmoji && !isDenyEmoji) continue;
+          
+          // Check if any reactor is an approver
+          for (const username of reaction.usernames ?? []) {
+            const isApprover = await checkIsApprover(username, approvers, account);
+            if (!isApprover) continue;
+            
+            // Generate a unique key to avoid re-processing the same reaction
+            const reactionKey = `${msg._id}:${emoji}:${username}`;
+            if (processedReactions.has(reactionKey)) continue;
+            processedReactions.add(reactionKey);
+            
+            // Process the approval/denial
+            if (isApproveEmoji) {
+              const result = await approveRequest(
+                approval.type === "dm" ? (approval.targetUsername ?? approval.targetId) : approval.targetId,
+                username,
+                approval.type
+              );
+              if (result) {
+                // Add to allowlist
+                if (approval.type === "dm") {
+                  await addToAllowFrom(approval.targetId);
+                } else {
+                  await addToAllowFrom(approval.targetId, "rocketchat-rooms");
+                }
+                
+                // Notify the requester
+                const message = approval.type === "dm" 
+                  ? buildApprovedMessage(approval.targetUsername ?? approval.targetId, "dm")
+                  : buildApprovedMessage(approval.targetName ?? approval.targetId, "room");
+                await sendMessageRocketChat(`room:${approval.replyRoomId}`, message, { accountId: account.accountId });
+                
+                logger.info?.(`[${account.accountId}] ${approval.type === "dm" ? "User" : "Room"} ${approval.targetUsername ?? approval.targetName ?? approval.targetId} approved via reaction by ${username}`);
+              }
+            } else if (isDenyEmoji) {
+              const result = await denyRequest(
+                approval.type === "dm" ? (approval.targetUsername ?? approval.targetId) : approval.targetId,
+                username,
+                approval.type
+              );
+              if (result) {
+                // Notify the requester
+                const message = buildDeniedMessage(approval.targetUsername ?? approval.targetName ?? approval.targetId, approval.type);
+                await sendMessageRocketChat(`room:${approval.replyRoomId}`, message, { accountId: account.accountId });
+                
+                logger.info?.(`[${account.accountId}] ${approval.type === "dm" ? "User" : "Room"} ${approval.targetUsername ?? approval.targetName ?? approval.targetId} denied via reaction by ${username}`);
+              }
+            }
+            
+            // Only process one approver's reaction per message
+            return;
+          }
+        }
+      }
+    } catch (err) {
+      logger.error?.(`[${account.accountId}] Failed to process reaction-based approval: ${String(err)}`);
+    }
+    
+    // If this was a duplicate (already processed as a regular message), return now
+    if (isDuplicate(msg._id)) return;
+  }
 
   // Skip system messages
   if (msg.t) return;
@@ -573,20 +698,32 @@ async function handleIncomingMessage(
                       targetUsername: senderUsername,
                     });
 
+                    // Track notification message IDs for reaction-based approval
+                    const notifyMessageIds: Array<{ roomId: string; messageId: string }> = [];
+
                     for (const channel of notifyChannels) {
                       try {
+                        let result;
                         if (channel.startsWith("@")) {
-                          await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
+                          result = await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
                         } else if (channel.startsWith("room:")) {
-                          await sendMessageRocketChat(channel, notifyMessage, { accountId: account.accountId });
+                          result = await sendMessageRocketChat(channel, notifyMessage, { accountId: account.accountId });
                         } else if (channel.startsWith("#")) {
-                          await sendMessageRocketChat(`room:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
+                          result = await sendMessageRocketChat(`room:${channel.slice(1)}`, notifyMessage, { accountId: account.accountId });
                         } else {
-                          await sendMessageRocketChat(`room:${channel}`, notifyMessage, { accountId: account.accountId });
+                          result = await sendMessageRocketChat(`room:${channel}`, notifyMessage, { accountId: account.accountId });
+                        }
+                        if (result?.messageId && result?.roomId) {
+                          notifyMessageIds.push({ roomId: result.roomId, messageId: result.messageId });
                         }
                       } catch (err) {
                         logger.error?.(`[${account.accountId}] Failed to send approval notification to ${channel}: ${String(err)}`);
                       }
+                    }
+
+                    // Store notification message IDs for reaction-based approval
+                    if (notifyMessageIds.length > 0) {
+                      await updateApprovalNotifyMessages(approval.id, notifyMessageIds);
                     }
 
                     await sendMessageRocketChat(`room:${msg.rid}`, buildWaitingMessage(), { accountId: account.accountId });
@@ -710,24 +847,36 @@ async function handleIncomingMessage(
                     requesterUsername: senderUsername,
                   });
 
+                  // Track notification message IDs for reaction-based approval
+                  const notifyMessageIds: Array<{ roomId: string; messageId: string }> = [];
+
                   for (const channel of notifyChannels) {
                     try {
+                      let result;
                       if (channel.startsWith("@")) {
-                        await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, {
+                        result = await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, {
                           accountId: account.accountId,
                         });
                       } else if (channel.startsWith("room:")) {
-                        await sendMessageRocketChat(channel, notifyMessage, {
+                        result = await sendMessageRocketChat(channel, notifyMessage, {
                           accountId: account.accountId,
                         });
                       } else {
-                        await sendMessageRocketChat(`room:${channel}`, notifyMessage, {
+                        result = await sendMessageRocketChat(`room:${channel}`, notifyMessage, {
                           accountId: account.accountId,
                         });
+                      }
+                      if (result?.messageId && result?.roomId) {
+                        notifyMessageIds.push({ roomId: result.roomId, messageId: result.messageId });
                       }
                     } catch (err) {
                       logger.error?.(`[${account.accountId}] Failed to send room approval notification to ${channel}: ${String(err)}`);
                     }
+                  }
+
+                  // Store notification message IDs for reaction-based approval
+                  if (notifyMessageIds.length > 0) {
+                    await updateApprovalNotifyMessages(approval.id, notifyMessageIds);
                   }
 
                   // Notify the room that it's pending approval

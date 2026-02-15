@@ -30,6 +30,9 @@ export type PendingApproval = {
   // Where to reply to the requester
   replyRoomId: string;
   
+  // Notification message IDs (for reaction-based approval)
+  notifyMessageIds?: Array<{ roomId: string; messageId: string }>;
+  
   // Timestamps
   createdAt: number;
   lastNotifiedAt: number;
@@ -253,4 +256,56 @@ export async function cleanupOldApprovals(): Promise<void> {
   
   store.pending = [...pending, ...completed];
   await saveStore(store);
+}
+
+/**
+ * Update the notification message IDs for an approval.
+ * Called after sending notifications to track which messages can receive reactions.
+ */
+export async function updateApprovalNotifyMessages(
+  approvalId: string,
+  notifyMessageIds: Array<{ roomId: string; messageId: string }>
+): Promise<void> {
+  const store = await loadStore();
+  const approval = store.pending.find((p) => p.id === approvalId);
+  
+  if (approval) {
+    approval.notifyMessageIds = notifyMessageIds;
+    await saveStore(store);
+  }
+}
+
+/**
+ * Find a pending approval by notification message ID.
+ * Used for reaction-based approval - when a user reacts to a notification message.
+ */
+export async function findApprovalByMessageId(
+  messageId: string
+): Promise<PendingApproval | null> {
+  const store = await loadStore();
+  
+  return store.pending.find((p) => {
+    if (p.status !== "pending") return false;
+    if (!p.notifyMessageIds) return false;
+    return p.notifyMessageIds.some((m) => m.messageId === messageId);
+  }) ?? null;
+}
+
+/**
+ * Get all notification message IDs for pending approvals.
+ * Used to know which messages to watch for reactions.
+ */
+export async function getAllPendingNotifyMessageIds(): Promise<string[]> {
+  const store = await loadStore();
+  const messageIds: string[] = [];
+  
+  for (const approval of store.pending) {
+    if (approval.status === "pending" && approval.notifyMessageIds) {
+      for (const m of approval.notifyMessageIds) {
+        messageIds.push(m.messageId);
+      }
+    }
+  }
+  
+  return messageIds;
 }

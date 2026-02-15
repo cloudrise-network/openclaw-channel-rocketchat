@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.1] - 2026-02-15
+
+### Added
+
+- **Reaction-based approval**: Approve or deny requests by reacting to notification messages
+  - ✅ (`:white_check_mark:`) or 👍 (`:thumbsup:`) to approve
+  - ❌ (`:x:`) or 👎 (`:thumbsdown:`) to deny
+  - Works for both DM and room approval requests
+  - Approvers no longer need to type commands — just react!
+
+### Changed
+
+- Approval notification messages now include reaction instructions
+- Commands now use `--` prefix (e.g., `--approve`) to avoid Rocket.Chat `/slash` command conflicts
+
 ## [0.6.0] - 2026-02-15
 
 > ⚠️ **Beta Features**: The approval flows (owner-approval, per-room ACL) in 0.5.0+ are functional but should be considered beta. Additional testing recommended before production use.

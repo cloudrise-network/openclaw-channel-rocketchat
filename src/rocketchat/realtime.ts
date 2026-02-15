@@ -51,6 +51,11 @@ export type RocketChatFile = {
   size?: number;
 };
 
+export type RocketChatReaction = {
+  usernames: string[];
+  names?: string[];
+};
+
 export type IncomingMessage = {
   _id: string;
   rid: string;
@@ -62,6 +67,8 @@ export type IncomingMessage = {
   attachments?: RocketChatAttachment[];
   file?: RocketChatFile;
   files?: RocketChatFile[];
+  reactions?: Record<string, RocketChatReaction>;
+  _updatedAt?: { $date: number } | string;
 };
 
 export class RocketChatRealtime {
