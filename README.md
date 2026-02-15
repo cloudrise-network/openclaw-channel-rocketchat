@@ -8,7 +8,26 @@ Neutral, self-host friendly Rocket.Chat channel plugin for **OpenClaw** (Cloudri
 - **Inbound:** Rocket.Chat Realtime (DDP/WebSocket) subscribe to `stream-room-messages`
 - **Outbound:** Rocket.Chat REST `chat.postMessage`
 
-## Upgrade / rename notice
+## Upgrade notices
+
+### v0.2.0+ — plugin id change
+
+The plugin id changed from `rocketchat` to `openclaw-channel-rocketchat` to align with OpenClaw's package-derived id convention and eliminate the "plugin id mismatch" warning.
+
+**Update your config:**
+
+```yaml
+plugins:
+  entries:
+    openclaw-channel-rocketchat:  # ← was "rocketchat"
+      enabled: true
+
+channels:
+  rocketchat:  # ← stays the same (channel id ≠ plugin id)
+    ...
+```
+
+### Clawdbot → OpenClaw migration
 
 If you were using the old Clawdbot-era package:
 
@@ -37,7 +56,7 @@ plugins:
       source: npm
       spec: "@cloudrise/openclaw-channel-rocketchat"
   entries:
-    rocketchat:
+    openclaw-channel-rocketchat:
       enabled: true
 
 channels:
@@ -125,7 +144,7 @@ plugins:
       source: npm
       spec: "@cloudrise/openclaw-channel-rocketchat"
   entries:
-    rocketchat:
+    openclaw-channel-rocketchat:
       enabled: true
 ```
 
@@ -137,7 +156,7 @@ plugins:
     paths:
       - /absolute/path/to/node_modules/@cloudrise/openclaw-channel-rocketchat
   entries:
-    rocketchat:
+    openclaw-channel-rocketchat:
       enabled: true
 ```
 

@@ -15,7 +15,7 @@ import { setRocketChatRuntime } from "./src/runtime.js";
 export { reactMessageRocketChat, sendMessageRocketChat } from "./src/rocketchat/send.js";
 
 const plugin = {
-  id: "rocketchat",
+  id: "openclaw-channel-rocketchat",
   name: "Rocket.Chat",
   description: "Rocket.Chat channel plugin for OpenClaw",
   configSchema: emptyPluginConfigSchema(),
