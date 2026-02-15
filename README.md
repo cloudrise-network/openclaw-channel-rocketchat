@@ -10,6 +10,31 @@ Neutral, self-host friendly Rocket.Chat channel plugin for **OpenClaw** (Cloudri
 
 ## Upgrade notices
 
+### v0.6.0 — Per-room access control (beta)
+
+New fine-grained per-room user access control:
+- `rooms.<roomId>.canInteract` — static list of users/roles who can interact
+- `rooms.<roomId>.roomApprovers` — who can approve others for this room
+- `rooms.<roomId>.responseMode` — "always" or "mention-only"
+- Room-level commands: `room-approve @user`, `room-deny @user`, `room-list`
+
+> ⚠️ **Beta**: Per-room ACL is functional but should be tested before production use.
+
+### v0.5.0 — Channel/room approval flow (beta)
+
+New `groupPolicy: "owner-approval"` for controlling which channels the bot responds in:
+- Bot sends "pending approval" message on first message in unapproved channels
+- Approve with `approve room:ROOMID`, deny with `deny room:ROOMID`
+
+> ⚠️ **Beta**: Channel approval flow is functional but should be tested before production use.
+
+### v0.4.0 — Owner-approval DM policy
+
+New `dmPolicy: "owner-approval"` for in-channel approval flow (no CLI needed):
+- Configure `ownerApproval.notifyChannels` for where to receive requests
+- Configure `ownerApproval.approvers` with usernames or Rocket.Chat roles (`role:admin`, `role:moderator`)
+- Commands: `approve @user`, `deny @user`, `pending`
+
 ### v0.3.0 — DM pairing support
 
 Added support for OpenClaw's DM pairing flow. Default behavior unchanged (`dmPolicy: "open"`), but you can now enable `dmPolicy: "pairing"` for per-user approval.
