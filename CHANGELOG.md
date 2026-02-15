@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.4.0] - 2026-02-15
+
+### Added
+
+- **Owner Channel Approval**: New `dmPolicy: "owner-approval"` mode for in-channel approval flow
+  - No CLI needed — approve/deny via Rocket.Chat messages
+  - Configure `ownerApproval.notifyChannels` for where to receive requests
+  - Configure `ownerApproval.approvers` with usernames or Rocket.Chat roles (`role:admin`, `role:moderator`)
+  - Commands: `approve @user`, `deny @user`, `approve room:ID`, `pending`
+  - Requester gets notified when approved/denied
+- **Rocket.Chat Role Integration**: Approvers can be defined by RC roles (admin, moderator, etc.)
+
+### Example Config
+
+```yaml
+channels:
+  rocketchat:
+    dmPolicy: "owner-approval"
+    ownerApproval:
+      enabled: true
+      notifyChannels:
+        - "@admin"
+        - "room:APPROVERS"
+      approvers:
+        - "@marshal"
+        - "role:admin"
+      notifyOnApprove: true
+      notifyOnDeny: true
+```
+
 ## [0.3.0] - 2026-02-15
 
 ### Added

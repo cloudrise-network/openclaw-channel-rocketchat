@@ -12,6 +12,34 @@ type RocketChatRoomConfig = {
   replyMode?: RocketChatReplyMode;
 };
 
+export type OwnerApprovalConfig = {
+  enabled?: boolean;
+  
+  /** Where to send approval notifications (e.g., "@admin", "room:APPROVERS") */
+  notifyChannels?: string[];
+  
+  /** Who can approve (e.g., "@marshal", "role:admin", "role:moderator") */
+  approvers?: string[];
+  
+  /** Timeout in seconds (0 = no timeout) */
+  timeout?: number;
+  
+  /** What to do on timeout: "pending" (keep waiting), "deny", "remind" */
+  onTimeout?: "pending" | "deny" | "remind";
+  
+  /** Notify requester when denied */
+  notifyOnDeny?: boolean;
+  
+  /** Notify requester when approved */
+  notifyOnApprove?: boolean;
+  
+  /** What requires approval */
+  requireApproval?: {
+    dm?: boolean;
+    roomInvite?: boolean;
+  };
+};
+
 export type RocketChatAccountConfig = {
   enabled?: boolean;
   name?: string;
@@ -19,11 +47,14 @@ export type RocketChatAccountConfig = {
   userId?: string;
   authToken?: string;
   authTokenFile?: string;
-  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
+  dmPolicy?: "pairing" | "allowlist" | "open" | "disabled" | "owner-approval";
   allowFrom?: string[];
-  groupPolicy?: "allowlist" | "open" | "disabled";
+  groupPolicy?: "allowlist" | "open" | "disabled" | "owner-approval";
   groupAllowFrom?: string[];
   rooms?: Record<string, RocketChatRoomConfig>;
+
+  /** Owner approval configuration */
+  ownerApproval?: OwnerApprovalConfig;
 
   /** Reply mode selection (thread | channel | auto). Default: thread (legacy behavior). */
   replyMode?: RocketChatReplyMode;

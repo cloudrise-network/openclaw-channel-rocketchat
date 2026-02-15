@@ -19,7 +19,33 @@ import {
   readChannelAllowFromStore,
   upsertChannelPairingRequest,
   buildPairingReply,
+  addToAllowFrom,
 } from "./pairing.js";
+
+import {
+  createApproval,
+  listPendingApprovals,
+  findPendingApproval,
+  approveRequest,
+  denyRequest,
+  type PendingApproval,
+} from "./approval-queue.js";
+
+import {
+  parseApprovalCommand,
+  buildApprovalRequestMessage,
+  buildWaitingMessage,
+  buildApprovedMessage,
+  buildDeniedMessage,
+  formatApprovalRequest,
+} from "./approval-commands.js";
+
+import {
+  isApprover,
+  isNotifyChannel,
+  getDmNotifyTargets,
+  fetchUserRoles,
+} from "./roles.js";
 
 import { getRocketChatRuntime } from "../runtime.js";
 import { resolveRocketChatAccount, type ResolvedRocketChatAccount } from "./accounts.js";
@@ -460,7 +486,6 @@ async function handleIncomingMessage(
         if (dmPolicy === "pairing") {
           try {
             const { code, created } = await upsertChannelPairingRequest({
-              channel: "rocketchat",
               id: senderId,
               meta: {
                 name: senderName ?? undefined,
@@ -471,7 +496,6 @@ async function handleIncomingMessage(
             if (created) {
               logger.info?.(`[${account.accountId}] Pairing request created for ${senderUsername ?? senderId}, code: ${code}`);
               const reply = buildPairingReply({
-                channel: "rocketchat",
                 idLine: `Rocket.Chat user: ${senderUsername ? `@${senderUsername}` : senderId}`,
                 code,
               });
@@ -485,6 +509,198 @@ async function handleIncomingMessage(
             logger.error?.(`[${account.accountId}] Failed to create pairing request: ${String(err)}`);
           }
           return;
+        }
+
+        // If "owner-approval" mode, use owner channel approval flow
+        if (dmPolicy === "owner-approval") {
+          const ownerConfig = account.config.ownerApproval;
+          if (!ownerConfig?.enabled) {
+            logger.debug?.(`[${account.accountId}] DM from ${senderUsername ?? senderId} blocked (dmPolicy=owner-approval but ownerApproval not enabled)`);
+            return;
+          }
+
+          try {
+            // Check if there's already a pending or approved request
+            const existing = await findPendingApproval(senderId, "dm");
+            if (existing?.status === "approved") {
+              // Already approved, let the message through (will be added to allowlist)
+              await addToAllowFrom(senderId);
+              // Continue processing below
+            } else {
+              // Create pending approval
+              const approval = await createApproval({
+                type: "dm",
+                targetId: senderId,
+                targetName: senderName,
+                targetUsername: senderUsername,
+                requesterId: senderId,
+                requesterName: senderName,
+                requesterUsername: senderUsername,
+                replyRoomId: msg.rid,
+                timeoutMs: ownerConfig.timeout ? ownerConfig.timeout * 1000 : undefined,
+              });
+
+              // Only notify if this is a new request
+              if (approval.createdAt === approval.lastNotifiedAt) {
+                // Send notification to owner channels
+                const notifyChannels = ownerConfig.notifyChannels ?? [];
+                const notifyMessage = buildApprovalRequestMessage({
+                  type: "dm",
+                  targetId: senderId,
+                  targetName: senderName,
+                  targetUsername: senderUsername,
+                });
+
+                for (const channel of notifyChannels) {
+                  try {
+                    if (channel.startsWith("@")) {
+                      // DM to user
+                      await sendMessageRocketChat(`user:${channel.slice(1)}`, notifyMessage, {
+                        accountId: account.accountId,
+                      });
+                    } else if (channel.startsWith("room:")) {
+                      // Room by ID
+                      await sendMessageRocketChat(channel, notifyMessage, {
+                        accountId: account.accountId,
+                      });
+                    } else if (channel.startsWith("#")) {
+                      // Room by name (need to resolve)
+                      await sendMessageRocketChat(`room:${channel.slice(1)}`, notifyMessage, {
+                        accountId: account.accountId,
+                      });
+                    } else {
+                      // Plain room ID or name
+                      await sendMessageRocketChat(`room:${channel}`, notifyMessage, {
+                        accountId: account.accountId,
+                      });
+                    }
+                  } catch (err) {
+                    logger.error?.(`[${account.accountId}] Failed to send approval notification to ${channel}: ${String(err)}`);
+                  }
+                }
+
+                // Tell the requester they're waiting
+                await sendMessageRocketChat(`room:${msg.rid}`, buildWaitingMessage(), {
+                  accountId: account.accountId,
+                });
+
+                logger.info?.(`[${account.accountId}] Approval request created for ${senderUsername ?? senderId}`);
+              }
+
+              return; // Don't process the message yet
+            }
+          } catch (err) {
+            logger.error?.(`[${account.accountId}] Failed to handle owner-approval flow: ${String(err)}`);
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  // === Owner Approval Command Handling ===
+  // Check if this message is an approval command from an approver
+  const ownerConfig = account.config.ownerApproval;
+  if (ownerConfig?.enabled) {
+    const approvers = ownerConfig.approvers ?? [];
+    const notifyChannels = ownerConfig.notifyChannels ?? [];
+    
+    // Check if sender is an approver
+    const restClient = createRocketChatClient({
+      baseUrl: account.baseUrl!,
+      userId: account.userId!,
+      authToken: account.authToken!,
+    });
+    
+    const senderIsApprover = await isApprover(
+      restClient,
+      msg.u._id,
+      msg.u.username,
+      approvers
+    );
+
+    // Check if this room is a notify channel
+    const roomName = room?.name ?? room?.fname;
+    const roomIsNotifyChannel = isNotifyChannel(msg.rid, roomName, notifyChannels);
+    
+    // Also check if this is a DM with the bot (approvers can send commands via DM)
+    const isDmWithBot = !isGroup;
+
+    if (senderIsApprover && (roomIsNotifyChannel || isDmWithBot)) {
+      const command = parseApprovalCommand(msg.msg);
+      
+      if (command) {
+        logger.debug?.(`[${account.accountId}] Approval command from ${msg.u.username}: ${JSON.stringify(command)}`);
+        
+        if (command.action === "list") {
+          // List pending approvals
+          const pending = await listPendingApprovals();
+          if (pending.length === 0) {
+            await sendMessageRocketChat(`room:${msg.rid}`, "✅ No pending approvals.", {
+              accountId: account.accountId,
+            });
+          } else {
+            const lines = pending.map(formatApprovalRequest);
+            await sendMessageRocketChat(`room:${msg.rid}`, `📋 **Pending approvals (${pending.length})**\n\n${lines.join("\n")}`, {
+              accountId: account.accountId,
+            });
+          }
+          return; // Don't process as regular message
+        }
+
+        if (command.action === "approve" || command.action === "deny") {
+          const results: string[] = [];
+          
+          for (const target of command.targets) {
+            // Determine type from target format
+            const type = target.startsWith("room:") ? "room" : "dm";
+            const cleanTarget = target.replace(/^room:/, "").replace(/^@/, "");
+            
+            let approval: PendingApproval | null;
+            if (command.action === "approve") {
+              approval = await approveRequest(cleanTarget, msg.u._id, type === "room" ? "room" : "dm");
+            } else {
+              approval = await denyRequest(cleanTarget, msg.u._id, type === "room" ? "room" : "dm");
+            }
+
+            if (approval) {
+              // Add to allowlist if approved
+              if (command.action === "approve") {
+                await addToAllowFrom(approval.targetId);
+              }
+
+              // Notify the requester
+              const shouldNotify = command.action === "approve" 
+                ? ownerConfig.notifyOnApprove !== false
+                : ownerConfig.notifyOnDeny === true;
+              
+              if (shouldNotify) {
+                try {
+                  const message = command.action === "approve"
+                    ? buildApprovedMessage(approval.targetId, approval.type)
+                    : buildDeniedMessage(approval.targetId, approval.type);
+                  
+                  await sendMessageRocketChat(`room:${approval.replyRoomId}`, message, {
+                    accountId: account.accountId,
+                  });
+                } catch (err) {
+                  logger.error?.(`[${account.accountId}] Failed to notify requester: ${String(err)}`);
+                }
+              }
+
+              const targetLabel = approval.targetUsername 
+                ? `@${approval.targetUsername}` 
+                : approval.targetId;
+              results.push(`${command.action === "approve" ? "✅" : "❌"} ${targetLabel}`);
+            } else {
+              results.push(`⚠️ No pending request for: ${target}`);
+            }
+          }
+
+          await sendMessageRocketChat(`room:${msg.rid}`, results.join("\n"), {
+            accountId: account.accountId,
+          });
+          return; // Don't process as regular message
         }
       }
     }

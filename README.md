@@ -354,35 +354,89 @@ npm publish
 
 (There is also a GitHub Actions workflow in `.github/workflows/publish.yml`.)
 
-## DM Access Control (Pairing)
+## DM Access Control
 
-The plugin supports OpenClaw's standard DM pairing flow for controlling who can message the bot.
+The plugin supports multiple DM access control modes, including a unique **Owner Channel Approval** flow.
 
 ### DM Policies
 
 ```yaml
 channels:
   rocketchat:
-    # DM access policy (default: "open")
-    dmPolicy: "pairing"  # or "open" | "allowlist" | "disabled"
-    
-    # Pre-approved users (used with "pairing" and "allowlist")
-    allowFrom:
-      - "@admin"
-      - "user123"
+    dmPolicy: "owner-approval"  # or "open" | "pairing" | "allowlist" | "disabled"
 ```
 
 | Policy | Behavior |
 |--------|----------|
 | `open` | **(Default)** All DMs allowed. Rocket.Chat server-level auth is the only gate. |
+| `owner-approval` | **🆕** Unknown senders trigger approval request to owner channel. No CLI needed! |
 | `pairing` | Unknown senders get a pairing code. Owner approves via CLI. |
 | `allowlist` | Only users in `allowFrom` can DM. Others are silently blocked. |
 | `disabled` | All DMs blocked. |
 
-### Pairing Flow
+---
 
-When `dmPolicy: "pairing"`:
+### Owner Channel Approval (Recommended)
 
+Approve or deny users **directly in Rocket.Chat** — no CLI needed!
+
+```yaml
+channels:
+  rocketchat:
+    dmPolicy: "owner-approval"
+    ownerApproval:
+      enabled: true
+      
+      # Where to send approval notifications
+      notifyChannels:
+        - "@admin"            # DM to specific user
+        - "room:APPROVERS"    # or a dedicated room
+      
+      # Who can approve (supports Rocket.Chat roles!)
+      approvers:
+        - "@marshal"          # specific username
+        - "role:admin"        # anyone with RC admin role
+        - "role:moderator"    # anyone with moderator role
+      
+      # Notify requester when decision is made
+      notifyOnApprove: true
+      notifyOnDeny: true
+      
+      # Optional timeout (seconds)
+      timeout: 3600
+      onTimeout: "pending"    # or "deny" or "remind"
+```
+
+**Flow:**
+1. Unknown user sends a DM
+2. Bot notifies owner channel: `"🔔 New DM request from @user123"`
+3. Owner replies: `approve @user123` or `deny @user123`
+4. Requester gets notified: `"✅ You've been approved!"`
+5. Future messages are processed normally
+
+**Commands (in owner channel or DM to bot):**
+```
+approve @user123           # approve a user
+deny @user123              # deny a user
+approve room:GENERAL       # approve a room
+pending                    # list pending requests
+```
+
+---
+
+### CLI-Based Pairing
+
+If you prefer CLI-based approval:
+
+```yaml
+channels:
+  rocketchat:
+    dmPolicy: "pairing"
+    allowFrom:
+      - "@admin"           # pre-approved users
+```
+
+**Flow:**
 1. Unknown user sends a DM
 2. Bot replies with a pairing code: `"Pairing required. Code: ABC12345"`
 3. Owner approves via CLI:
@@ -390,8 +444,9 @@ When `dmPolicy: "pairing"`:
    openclaw pairing list rocketchat
    openclaw pairing approve rocketchat ABC12345
    ```
-4. User is added to allowlist and notified: `"✅ You've been approved!"`
-5. Future messages are processed normally
+4. User is added to allowlist
+
+---
 
 ### Why is the default "open"?
 
@@ -400,7 +455,7 @@ Unlike public platforms (Telegram, WhatsApp, Signal), Rocket.Chat is typically:
 - Behind organizational access controls
 - Already requires user accounts to message
 
-So **server-level authentication acts as the primary gate**. Use `pairing` or `allowlist` if you need per-user approval on top of that.
+So **server-level authentication acts as the primary gate**. Use `owner-approval` or `pairing` if you need per-user approval on top of that.
 
 ## Security
 

@@ -2,7 +2,7 @@
   "id": "openclaw-channel-rocketchat",
   "name": "Rocket.Chat",
   "description": "Rocket.Chat channel plugin for OpenClaw",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "channels": ["rocketchat"],
   "configSchema": {
     "type": "object",
@@ -15,9 +15,36 @@
       "authTokenFile": { "type": "string" },
       "dmPolicy": {
         "type": "string",
-        "enum": ["open", "pairing", "allowlist", "disabled"],
+        "enum": ["open", "pairing", "allowlist", "disabled", "owner-approval"],
         "default": "open",
-        "description": "DM access policy. 'open' allows all (server-level auth), 'pairing' requires approval, 'allowlist' requires pre-configured allowFrom, 'disabled' blocks all DMs."
+        "description": "DM access policy. 'open' allows all, 'pairing' requires CLI approval, 'owner-approval' requires owner channel approval, 'allowlist' requires pre-configured allowFrom, 'disabled' blocks all DMs."
+      },
+      "ownerApproval": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean", "default": false },
+          "notifyChannels": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Where to send approval notifications (e.g., '@admin', 'room:APPROVERS')"
+          },
+          "approvers": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Who can approve (e.g., '@marshal', 'role:admin', 'role:moderator')"
+          },
+          "timeout": { "type": "number", "description": "Timeout in seconds (0 = no timeout)" },
+          "onTimeout": { "type": "string", "enum": ["pending", "deny", "remind"], "default": "pending" },
+          "notifyOnDeny": { "type": "boolean", "default": false },
+          "notifyOnApprove": { "type": "boolean", "default": true },
+          "requireApproval": {
+            "type": "object",
+            "properties": {
+              "dm": { "type": "boolean", "default": true },
+              "roomInvite": { "type": "boolean", "default": true }
+            }
+          }
+        }
       },
       "allowFrom": {
         "type": "array",
