@@ -78,6 +78,16 @@ export function normalizeRocketChatBaseUrl(url?: string): string | null {
   }
 }
 
+export class RocketChatRateLimitError extends Error {
+  /** Seconds the server asked us to wait (from Retry-After header or response body). */
+  retryAfterSecs: number;
+  constructor(retryAfterSecs: number, detail?: string) {
+    super(`Rocket.Chat 429 Too Many Requests (retry after ${retryAfterSecs}s)${detail ? `: ${detail}` : ""}`);
+    this.name = "RocketChatRateLimitError";
+    this.retryAfterSecs = retryAfterSecs;
+  }
+}
+
 async function rcFetch<T>(
   client: RocketChatClient,
   path: string,
@@ -93,6 +103,23 @@ async function rcFetch<T>(
   const res = await client.fetch(url, { ...opts, headers });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // Surface 429 with parsed retry-after so callers can gate properly.
+    if (res.status === 429) {
+      let retryAfter = 60; // conservative default
+      const raHeader = res.headers.get("retry-after");
+      if (raHeader && Number.isFinite(Number(raHeader))) {
+        retryAfter = Math.max(1, Math.ceil(Number(raHeader)));
+      } else {
+        // Rocket.Chat often embeds the wait in the JSON body
+        try {
+          const body = JSON.parse(text) as { error?: string; timeToReset?: number };
+          if (body.timeToReset && Number.isFinite(body.timeToReset)) {
+            retryAfter = Math.max(1, Math.ceil(body.timeToReset / 1000));
+          }
+        } catch { /* ignore parse failure */ }
+      }
+      throw new RocketChatRateLimitError(retryAfter, text);
+    }
     throw new Error(`Rocket.Chat API error ${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;

@@ -69,6 +69,7 @@ import {
   fetchRocketChatSubscriptions,
   normalizeRocketChatBaseUrl,
   sendRocketChatTyping,
+  RocketChatRateLimitError,
   type RocketChatRoom,
   type RocketChatClient,
 } from "./client.js";
@@ -314,11 +315,32 @@ export async function monitorRocketChatProvider(
   }
 
   let refreshTimer: NodeJS.Timeout | null = null;
+  /** Timestamp (ms) until which we must not call the subscriptions REST endpoint. */
+  let rateLimitedUntil = 0;
+  /** Timestamp of last successful refresh — used to enforce a minimum interval. */
+  let lastRefreshAt = 0;
+  /** Minimum milliseconds between successful REST refreshes (prevents 429 storms). */
+  const REFRESH_MIN_INTERVAL_MS = 30_000;
 
   async function refreshSubscriptions(): Promise<void> {
+    // Respect server-imposed rate-limit gate.
+    const now = Date.now();
+    if (now < rateLimitedUntil) {
+      const waitSec = Math.ceil((rateLimitedUntil - now) / 1000);
+      logger.debug?.(`[${account.accountId}] Skipping subscription refresh — rate-limited for ${waitSec}s more`);
+      return;
+    }
+
+    // Enforce minimum interval between refreshes.
+    if (now - lastRefreshAt < REFRESH_MIN_INTERVAL_MS) {
+      logger.debug?.(`[${account.accountId}] Skipping subscription refresh — last refresh was ${Math.round((now - lastRefreshAt) / 1000)}s ago (min ${REFRESH_MIN_INTERVAL_MS / 1000}s)`);
+      return;
+    }
+
     const client = createRocketChatClient({ baseUrl, userId, authToken });
     try {
       const subscriptions = await fetchRocketChatSubscriptions(client);
+      lastRefreshAt = Date.now();
       // Subscribe to *all* rooms this user is a member of, including DMs.
       // Some Rocket.Chat servers mark DMs (and other rooms) as open=false until the user opens them in the UI;
       // filtering on `open` breaks DM delivery.
@@ -329,11 +351,20 @@ export async function monitorRocketChatProvider(
       logger.info?.(`[${account.accountId}] Refresh subscriptions: subscribing to ${roomIds.length} rooms`);
       await realtime.subscribeToRooms(roomIds);
     } catch (err) {
-      logger.error?.(`[${account.accountId}] Failed to refresh subscriptions: ${String(err)}`);
+      if (err instanceof RocketChatRateLimitError) {
+        rateLimitedUntil = Date.now() + err.retryAfterSecs * 1000;
+        logger.info?.(`[${account.accountId}] Subscription refresh 429 — backing off for ${err.retryAfterSecs}s`);
+      } else {
+        logger.error?.(`[${account.accountId}] Failed to refresh subscriptions: ${String(err)}`);
+      }
     }
   }
 
-  function scheduleRefreshSubscriptions(delayMs = 1000): void {
+  /**
+   * Schedule a debounced subscription refresh.
+   * Default delay is 2000ms to coalesce bursts of subscriptions-changed events.
+   */
+  function scheduleRefreshSubscriptions(delayMs = 2000): void {
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => {
       refreshTimer = null;
@@ -371,7 +402,7 @@ export async function monitorRocketChatProvider(
       // Try to catch subscription changes and refresh room subscriptions.
       if (evt.collection === "stream-notify-user" && evt.eventName?.includes("subscriptions-changed")) {
         logger.info?.(`[${account.accountId}] subscriptions-changed detected (${evt.eventName}); refreshing...`);
-        scheduleRefreshSubscriptions(250);
+        scheduleRefreshSubscriptions(2000);
       }
     },
     onMessage: async (msg) => {
