@@ -3,9 +3,7 @@
  */
 
 import * as fs from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
-import * as crypto from "node:crypto";
 
 import type {
   ChannelAccountSnapshot,
@@ -13,7 +11,7 @@ import type {
   RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
-import { createReplyPrefixContext } from "openclaw/plugin-sdk";
+import { buildRandomTempFilePath, createReplyPrefixContext } from "openclaw/plugin-sdk";
 
 import {
   readChannelAllowFromStore,
@@ -258,7 +256,7 @@ async function fetchFileToTemp(
       if (fnExt) ext = fnExt;
     }
     
-    const tempPath = path.join(os.tmpdir(), `openclaw-rc-${crypto.randomUUID()}${ext}`);
+    const tempPath = buildRandomTempFilePath({ prefix: "openclaw-rc", extension: ext });
     await fs.writeFile(tempPath, buffer, { mode: 0o600 });
     
     return {
