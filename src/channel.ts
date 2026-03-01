@@ -56,7 +56,9 @@ function looksLikeRocketChatTargetId(value: string): boolean {
 
   // Rocket.Chat room IDs vary by deployment.
   // Common lengths are 17 (token-ish) and 24 (Mongo ObjectId), but allow growth.
-  if (/^[A-Za-z0-9]{17,64}$/.test(trimmed)) return true;
+  // Rocket.Chat room IDs: 17–24 char alphanumeric (Mongo ObjectId style)
+  // Room names: may contain hyphens, underscores, dots (e.g. "Claw-Chat")
+  if (/^[A-Za-z0-9_.-]{3,64}$/.test(trimmed)) return true;
 
   if (trimmed.startsWith("#") || trimmed.startsWith("@")) return true;
   if (lower.startsWith("room:")) return true;
@@ -251,7 +253,7 @@ export const rocketChatPlugin: ChannelPlugin<ResolvedRocketChatAccount> = {
         authTokenSource: account.authTokenSource,
       });
       ctx.log?.info(`[${account.accountId}] starting Rocket.Chat channel`);
-      return monitorRocketChatProvider({
+      const cleanup = await monitorRocketChatProvider({
         authToken: account.authToken ?? undefined,
         userId: account.userId ?? undefined,
         baseUrl: account.baseUrl ?? undefined,
@@ -260,6 +262,22 @@ export const rocketChatPlugin: ChannelPlugin<ResolvedRocketChatAccount> = {
         runtime: ctx.runtime,
         abortSignal: ctx.abortSignal,
         statusSink: (patch) => ctx.setStatus({ accountId: ctx.accountId, ...patch }),
+      });
+
+      // Keep the account "running" until the gateway signals abort.
+      // Without this, the promise resolves immediately after setup and
+      // the gateway health monitor treats the channel as stopped,
+      // triggering an infinite auto-restart loop.
+      await new Promise<void>((resolve) => {
+        if (ctx.abortSignal.aborted) {
+          cleanup();
+          resolve();
+          return;
+        }
+        ctx.abortSignal.addEventListener("abort", () => {
+          cleanup();
+          resolve();
+        }, { once: true });
       });
     },
   },
