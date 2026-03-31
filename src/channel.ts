@@ -13,6 +13,7 @@ import {
   type ResolvedRocketChatAccount,
 } from "./rocketchat/accounts.js";
 import { normalizeRocketChatBaseUrl } from "./rocketchat/client.js";
+import { resolveRocketChatCommandConversation } from "./rocketchat/conversation-bindings.js";
 import { monitorRocketChatProvider } from "./rocketchat/monitor.js";
 import { reactMessageRocketChat, sendMessageRocketChat } from "./rocketchat/send.js";
 import { getRocketChatRuntime } from "./runtime.js";
@@ -161,6 +162,19 @@ export const rocketChatPlugin: ChannelPlugin<ResolvedRocketChatAccount> = {
         normalizeEntry: normalizeAllowEntry,
       };
     },
+  },
+  bindings: {
+    resolveCommandConversation: ({ threadId, threadParentId, originatingTo, commandTo, fallbackTo }) =>
+      resolveRocketChatCommandConversation({
+        threadId,
+        threadParentId,
+        originatingTo,
+        commandTo,
+        fallbackTo,
+      }),
+  },
+  conversationBindings: {
+    supportsCurrentConversationBinding: true,
   },
   messaging: {
     normalizeTarget: normalizeRocketChatMessagingTarget,
