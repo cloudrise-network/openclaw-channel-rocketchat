@@ -52,6 +52,34 @@ function resolveAgentIdFromSessionKey(targetSessionKey) {
   return firstSegment || undefined;
 }
 
+export function resolveRocketChatBoundRoute(params) {
+  const runtimeBinding = params.bindingService?.resolveByConversation?.({
+    channel: "rocketchat",
+    accountId: normalizeAccountId(params.accountId),
+    conversationId: params.conversationId,
+    ...(params.parentConversationId
+      ? { parentConversationId: params.parentConversationId }
+      : {}),
+  });
+  const boundSessionKey = runtimeBinding?.targetSessionKey?.trim();
+  if (!runtimeBinding || !boundSessionKey) {
+    return {
+      route: params.route,
+      runtimeBindingId: null,
+    };
+  }
+
+  return {
+    route: {
+      ...params.route,
+      sessionKey: boundSessionKey,
+      agentId: resolveAgentIdFromSessionKey(boundSessionKey) || params.route.agentId,
+      matchedBy: "binding.channel",
+    },
+    runtimeBindingId: runtimeBinding.bindingId,
+  };
+}
+
 function resolveExpiresAt(record, defaults) {
   const candidates = [];
   if (typeof defaults.idleTimeoutMs === "number" && defaults.idleTimeoutMs > 0) {

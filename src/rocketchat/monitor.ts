@@ -12,6 +12,7 @@ import type {
 } from "openclaw/plugin-sdk";
 
 import { createReplyPrefixContext } from "openclaw/plugin-sdk/channel-runtime";
+import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
 import { buildRandomTempFilePath } from "openclaw/plugin-sdk/temp-path";
 
 import {
@@ -60,6 +61,7 @@ import {
   fetchUserRoles,
   fetchUserByUsername,
 } from "./roles.js";
+import { resolveRocketChatBoundRoute } from "./session-bindings.js";
 
 import { getRocketChatRuntime } from "../runtime.js";
 import { resolveRocketChatAccount, type ResolvedRocketChatAccount } from "./accounts.js";
@@ -1295,7 +1297,7 @@ async function handleIncomingMessage(
   });
 
   // Resolve agent route
-  const route = core.channel?.routing?.resolveAgentRoute?.({
+  let route = core.channel?.routing?.resolveAgentRoute?.({
     cfg,
     channel: "rocketchat",
     accountId: account.accountId,
@@ -1308,6 +1310,20 @@ async function handleIncomingMessage(
     sessionKey: `rocketchat:${isGroup ? "group" : "dm"}:${isGroup ? roomId : senderId}`,
     accountId: account.accountId,
   };
+  const boundRoute = resolveRocketChatBoundRoute({
+    route,
+    bindingService: getSessionBindingService(),
+    accountId: account.accountId,
+    conversationId: msg.tmid ?? roomId,
+    parentConversationId: msg.tmid ? roomId : undefined,
+  });
+  route = boundRoute.route;
+  if (boundRoute.runtimeBindingId) {
+    getSessionBindingService().touch(boundRoute.runtimeBindingId, ts);
+    logger.debug?.(
+      `Rocket.Chat routed via bound conversation ${msg.tmid ?? roomId} -> ${route.sessionKey}`
+    );
+  }
 
   // Build from label
   const fromLabel = isGroup

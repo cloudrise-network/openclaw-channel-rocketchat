@@ -7,6 +7,7 @@ import fs from "node:fs";
 
 import {
   createRocketChatSessionBindingManager,
+  resolveRocketChatBoundRoute,
 } from "../src/rocketchat/session-bindings.js";
 import {
   normalizeRocketChatConversationId,
@@ -144,6 +145,48 @@ test("session binding manager refuses child placement", async () => {
   });
 
   assert.strictEqual(result, null);
+  manager.stop();
+});
+
+test("bound route switches inbound delivery to the ACP session", async () => {
+  const registered = [];
+  const manager = createRocketChatSessionBindingManager({
+    accountId: "default",
+    registerSessionBindingAdapter: (adapter) => registered.push(adapter),
+    unregisterSessionBindingAdapter: () => {},
+  });
+
+  await registered[0].bind({
+    targetSessionKey: "acp:session-789",
+    targetKind: "session",
+    conversation: {
+      channel: "rocketchat",
+      accountId: "default",
+      conversationId: "thread-root-message-id",
+      parentConversationId: "ByehQjC44FwMeiLbX",
+    },
+    placement: "current",
+    metadata: {},
+  });
+
+  const result = resolveRocketChatBoundRoute({
+    route: {
+      agentId: "main",
+      sessionKey: "rocketchat:group:ByehQjC44FwMeiLbX",
+    },
+    bindingService: {
+      resolveByConversation: registered[0].resolveByConversation,
+    },
+    accountId: "default",
+    conversationId: "thread-root-message-id",
+    parentConversationId: "ByehQjC44FwMeiLbX",
+  });
+
+  assert.strictEqual(result.route.sessionKey, "acp:session-789");
+  assert.strictEqual(result.route.agentId, "acp");
+  assert.strictEqual(result.route.matchedBy, "binding.channel");
+  assert.ok(result.runtimeBindingId);
+
   manager.stop();
 });
 
