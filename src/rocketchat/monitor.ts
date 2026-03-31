@@ -11,7 +11,8 @@ import type {
   RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
-import { buildRandomTempFilePath, createReplyPrefixContext } from "openclaw/plugin-sdk";
+import { createReplyPrefixContext } from "openclaw/plugin-sdk/channel-runtime";
+import { buildRandomTempFilePath } from "openclaw/plugin-sdk/temp-path";
 
 import {
   readChannelAllowFromStore,
