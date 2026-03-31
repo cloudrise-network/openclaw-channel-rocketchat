@@ -11,7 +11,9 @@ import type {
   RuntimeEnv,
 } from "openclaw/plugin-sdk";
 
-import { buildRandomTempFilePath, createReplyPrefixContext } from "openclaw/plugin-sdk";
+import { createReplyPrefixContext } from "openclaw/plugin-sdk/channel-runtime";
+import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
+import { buildRandomTempFilePath } from "openclaw/plugin-sdk/temp-path";
 
 import {
   readChannelAllowFromStore,
@@ -59,6 +61,8 @@ import {
   fetchUserRoles,
   fetchUserByUsername,
 } from "./roles.js";
+import { createRocketChatReplyDeduper } from "./reply-dedupe.js";
+import { resolveRocketChatBoundRoute } from "./session-bindings.js";
 
 import { getRocketChatRuntime } from "../runtime.js";
 import { resolveRocketChatAccount, type ResolvedRocketChatAccount } from "./accounts.js";
@@ -1294,7 +1298,7 @@ async function handleIncomingMessage(
   });
 
   // Resolve agent route
-  const route = core.channel?.routing?.resolveAgentRoute?.({
+  let route = core.channel?.routing?.resolveAgentRoute?.({
     cfg,
     channel: "rocketchat",
     accountId: account.accountId,
@@ -1307,6 +1311,20 @@ async function handleIncomingMessage(
     sessionKey: `rocketchat:${isGroup ? "group" : "dm"}:${isGroup ? roomId : senderId}`,
     accountId: account.accountId,
   };
+  const boundRoute = resolveRocketChatBoundRoute({
+    route,
+    bindingService: getSessionBindingService(),
+    accountId: account.accountId,
+    conversationId: msg.tmid ?? roomId,
+    parentConversationId: msg.tmid ? roomId : undefined,
+  });
+  route = boundRoute.route;
+  if (boundRoute.runtimeBindingId) {
+    getSessionBindingService().touch(boundRoute.runtimeBindingId, ts);
+    logger.debug?.(
+      `Rocket.Chat routed via bound conversation ${msg.tmid ?? roomId} -> ${route.sessionKey}`
+    );
+  }
 
   // Build from label
   const fromLabel = isGroup
@@ -1420,9 +1438,12 @@ async function handleIncomingMessage(
     Provider: "rocketchat",
     Surface: "rocketchat",
     MessageSid: msg._id,
+    MessageThreadId: msg.tmid ?? undefined,
     Timestamp: ts,
+    ThreadParentId: msg.tmid ? roomId : undefined,
     OriginatingChannel: "rocketchat",
     OriginatingTo: `rocketchat:${roomId}`,
+    NativeChannelId: roomId,
 
     // Image attachments (fetched to temp files)
     MediaPaths: mediaPaths?.length ? mediaPaths : undefined,
@@ -1489,6 +1510,7 @@ async function handleIncomingMessage(
   }
 
   startTypingAfterDelay();
+  const replyDeduper = createRocketChatReplyDeduper();
 
   try {
     // Wire up responsePrefix support (e.g. messages.responsePrefix: "({model}) ")
@@ -1503,7 +1525,10 @@ async function handleIncomingMessage(
         responsePrefixContextProvider: prefix.responsePrefixContextProvider,
         deliver: async (payload) => {
           const text = (payload as { text?: string }).text ?? "";
-          if (!text.trim()) return;
+          if (!replyDeduper.shouldDeliver(text)) {
+            logger.debug?.(`Skipping duplicate Rocket.Chat reply payload for message ${msg._id}`);
+            return;
+          }
 
           const replyToId = resolvedReplyMode === "thread" ? (msg.tmid ?? msg._id) : undefined;
 
@@ -1518,6 +1543,10 @@ async function handleIncomingMessage(
         },
       },
       replyOptions: {
+        disableBlockStreaming:
+          typeof account.config.blockStreaming === "boolean"
+            ? !account.config.blockStreaming
+            : false,
         onModelSelected: prefix.onModelSelected,
       },
     });

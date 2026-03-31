@@ -7,8 +7,16 @@
 
 import type { OpenclawPluginApi } from "openclaw/plugin-sdk";
 import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import {
+  registerSessionBindingAdapter,
+  resolveThreadBindingIdleTimeoutMsForChannel,
+  resolveThreadBindingMaxAgeMsForChannel,
+  unregisterSessionBindingAdapter,
+} from "openclaw/plugin-sdk/conversation-runtime";
 
 import { rocketChatPlugin } from "./src/channel.js";
+import { listRocketChatAccountIds } from "./src/rocketchat/accounts.js";
+import { ensureRocketChatSessionBindings } from "./src/rocketchat/session-bindings.js";
 import { setRocketChatRuntime } from "./src/runtime.js";
 
 // Re-export send/react functions for OpenClaw message tool
@@ -21,6 +29,14 @@ const plugin = {
   configSchema: emptyPluginConfigSchema(),
   register(api: OpenclawPluginApi) {
     setRocketChatRuntime(api.runtime);
+    ensureRocketChatSessionBindings({
+      cfg: api.config,
+      listAccountIds: listRocketChatAccountIds,
+      registerSessionBindingAdapter,
+      unregisterSessionBindingAdapter,
+      resolveIdleTimeoutMs: resolveThreadBindingIdleTimeoutMsForChannel,
+      resolveMaxAgeMs: resolveThreadBindingMaxAgeMsForChannel,
+    });
     api.registerChannel({ plugin: rocketChatPlugin });
   },
 };
