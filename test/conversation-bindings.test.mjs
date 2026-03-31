@@ -72,6 +72,21 @@ test("plugin opts into current-conversation ACP bindings", () => {
   );
 });
 
+test("monitor forwards Rocket.Chat thread metadata into ACP context", () => {
+  const monitorSource = fs.readFileSync(
+    new URL("../src/rocketchat/monitor.ts", import.meta.url),
+    "utf8"
+  );
+  assert.ok(
+    monitorSource.includes("MessageThreadId: msg.tmid ?? undefined"),
+    "src/rocketchat/monitor.ts should forward MessageThreadId for ACP command binding"
+  );
+  assert.ok(
+    monitorSource.includes("ThreadParentId: msg.tmid ? roomId : undefined"),
+    "src/rocketchat/monitor.ts should forward ThreadParentId for ACP command binding"
+  );
+});
+
 test("session binding manager registers a current-placement adapter", async () => {
   const registered = [];
   const manager = createRocketChatSessionBindingManager({

@@ -1437,9 +1437,12 @@ async function handleIncomingMessage(
     Provider: "rocketchat",
     Surface: "rocketchat",
     MessageSid: msg._id,
+    MessageThreadId: msg.tmid ?? undefined,
     Timestamp: ts,
+    ThreadParentId: msg.tmid ? roomId : undefined,
     OriginatingChannel: "rocketchat",
     OriginatingTo: `rocketchat:${roomId}`,
+    NativeChannelId: roomId,
 
     // Image attachments (fetched to temp files)
     MediaPaths: mediaPaths?.length ? mediaPaths : undefined,
