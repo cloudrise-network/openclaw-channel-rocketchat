@@ -78,6 +78,9 @@ export type RocketChatAccountConfig = {
 
   /** Typing indicator delay (ms) before emitting user-typing. Default 1000. */
   typingDelayMs?: number;
+
+  /** Whether streamed block replies should be emitted before the final answer. Default: true. */
+  blockStreaming?: boolean;
 };
 
 export type ResolvedRocketChatAccount = {

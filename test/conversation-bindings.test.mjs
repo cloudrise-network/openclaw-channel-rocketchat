@@ -13,6 +13,7 @@ import {
   normalizeRocketChatConversationId,
   resolveRocketChatCommandConversation,
 } from "../src/rocketchat/conversation-bindings.js";
+import { createRocketChatReplyDeduper } from "../src/rocketchat/reply-dedupe.js";
 
 const tests = [];
 
@@ -203,6 +204,41 @@ test("bound route switches inbound delivery to the ACP session", async () => {
   assert.ok(result.runtimeBindingId);
 
   manager.stop();
+});
+
+test("reply deduper suppresses identical repeated deliveries within one turn", () => {
+  const deduper = createRocketChatReplyDeduper();
+
+  assert.strictEqual(deduper.shouldDeliver("bound follow-up works"), true);
+  assert.strictEqual(deduper.shouldDeliver("bound follow-up works"), false);
+  assert.strictEqual(deduper.shouldDeliver("Session ids resolved."), true);
+  assert.strictEqual(deduper.shouldDeliver("Session ids resolved."), false);
+});
+
+test("monitor currently uses buffered reply dispatch", () => {
+  const monitorSource = fs.readFileSync(
+    new URL("../src/rocketchat/monitor.ts", import.meta.url),
+    "utf8"
+  );
+  assert.ok(
+    monitorSource.includes("dispatchReplyWithBufferedBlockDispatcher?.({"),
+    "src/rocketchat/monitor.ts should use the buffered reply dispatcher"
+  );
+});
+
+test("monitor enables block streaming for Rocket.Chat by default", () => {
+  const monitorSource = fs.readFileSync(
+    new URL("../src/rocketchat/monitor.ts", import.meta.url),
+    "utf8"
+  );
+  assert.ok(
+    monitorSource.includes("disableBlockStreaming:"),
+    "src/rocketchat/monitor.ts should set disableBlockStreaming explicitly"
+  );
+  assert.ok(
+    monitorSource.includes(': false,'),
+    "src/rocketchat/monitor.ts should default Rocket.Chat block streaming to enabled"
+  );
 });
 
 console.log("Running Rocket.Chat conversation binding tests...\n");

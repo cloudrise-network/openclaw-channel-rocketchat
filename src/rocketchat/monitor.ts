@@ -61,6 +61,7 @@ import {
   fetchUserRoles,
   fetchUserByUsername,
 } from "./roles.js";
+import { createRocketChatReplyDeduper } from "./reply-dedupe.js";
 import { resolveRocketChatBoundRoute } from "./session-bindings.js";
 
 import { getRocketChatRuntime } from "../runtime.js";
@@ -1509,6 +1510,7 @@ async function handleIncomingMessage(
   }
 
   startTypingAfterDelay();
+  const replyDeduper = createRocketChatReplyDeduper();
 
   try {
     // Wire up responsePrefix support (e.g. messages.responsePrefix: "({model}) ")
@@ -1523,7 +1525,10 @@ async function handleIncomingMessage(
         responsePrefixContextProvider: prefix.responsePrefixContextProvider,
         deliver: async (payload) => {
           const text = (payload as { text?: string }).text ?? "";
-          if (!text.trim()) return;
+          if (!replyDeduper.shouldDeliver(text)) {
+            logger.debug?.(`Skipping duplicate Rocket.Chat reply payload for message ${msg._id}`);
+            return;
+          }
 
           const replyToId = resolvedReplyMode === "thread" ? (msg.tmid ?? msg._id) : undefined;
 
@@ -1538,6 +1543,10 @@ async function handleIncomingMessage(
         },
       },
       replyOptions: {
+        disableBlockStreaming:
+          typeof account.config.blockStreaming === "boolean"
+            ? !account.config.blockStreaming
+            : false,
         onModelSelected: prefix.onModelSelected,
       },
     });
