@@ -3,7 +3,6 @@
  */
 
 import {
-  DEFAULT_ACCOUNT_ID,
   type ChannelPlugin,
 } from "openclaw/plugin-sdk";
 
@@ -17,6 +16,8 @@ import { normalizeRocketChatBaseUrl } from "./rocketchat/client.js";
 import { monitorRocketChatProvider } from "./rocketchat/monitor.js";
 import { reactMessageRocketChat, sendMessageRocketChat } from "./rocketchat/send.js";
 import { getRocketChatRuntime } from "./runtime.js";
+
+const DEFAULT_ACCOUNT_ID = "default";
 
 const meta = {
   id: "rocketchat",
