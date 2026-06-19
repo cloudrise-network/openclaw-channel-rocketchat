@@ -5,13 +5,12 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import type {
-  ChannelAccountSnapshot,
-  OpenclawConfig,
-  RuntimeEnv,
-} from "openclaw/plugin-sdk";
+import type { ChannelAccountSnapshot } from "openclaw/plugin-sdk/channel-contract";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 
-import { buildRandomTempFilePath, createReplyPrefixContext } from "openclaw/plugin-sdk";
+import { buildRandomTempFilePath } from "openclaw/plugin-sdk/temp-path";
+import { createReplyPrefixContext } from "openclaw/plugin-sdk/channel-message";
 
 import {
   readChannelAllowFromStore,
@@ -81,7 +80,7 @@ export type MonitorRocketChatOpts = {
   userId?: string;
   baseUrl?: string;
   accountId?: string;
-  config?: OpenclawConfig;
+  config?: OpenClawConfig;
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   statusSink?: (patch: Partial<ChannelAccountSnapshot>) => void;
@@ -497,7 +496,7 @@ export async function monitorRocketChatProvider(
 async function handleIncomingMessage(
   msg: IncomingMessage,
   account: ResolvedRocketChatAccount,
-  cfg: OpenclawConfig,
+  cfg: OpenClawConfig,
   core: RuntimeEnv,
   getRoom: (roomId: string) => Promise<RocketChatRoom | null>,
   logger: { info?: (msg: string) => void; debug?: (msg: string) => void; error?: (msg: string) => void },

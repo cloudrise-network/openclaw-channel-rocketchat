@@ -2,10 +2,8 @@
  * Rocket.Chat channel plugin for OpenClaw
  */
 
-import {
-  DEFAULT_ACCOUNT_ID,
-  type ChannelPlugin,
-} from "openclaw/plugin-sdk";
+import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/channel-setup";
+import type { ChannelPlugin } from "openclaw/plugin-sdk/channel-plugin-common";
 
 import {
   listRocketChatAccountIds,

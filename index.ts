@@ -5,8 +5,8 @@
  * for sending messages and the Realtime/DDP API for receiving messages.
  */
 
-import type { OpenclawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-plugin-common";
+import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/channel-plugin-common";
 
 import { rocketChatPlugin } from "./src/channel.js";
 import { setRocketChatRuntime } from "./src/runtime.js";
@@ -19,7 +19,7 @@ const plugin = {
   name: "Rocket.Chat",
   description: "Rocket.Chat channel plugin for OpenClaw",
   configSchema: emptyPluginConfigSchema(),
-  register(api: OpenclawPluginApi) {
+  register(api: OpenClawPluginApi) {
     setRocketChatRuntime(api.runtime);
     api.registerChannel({ plugin: rocketChatPlugin });
   },

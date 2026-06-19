@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1] - 2026-06-19
+
+### Changed
+
+- **SDK import migration**: Migrated all imports from the deprecated `openclaw/plugin-sdk` barrel to focused `openclaw/plugin-sdk/<subpath>` entry points, clearing the `OPENCLAW_PLUGIN_SDK_COMPAT_DEPRECATED` warning under OpenClaw 2026.6.8. Also renamed `OpenclawPluginApi`/`OpenclawConfig` to the current `OpenClawPluginApi`/`OpenClawConfig` symbol names.
+- **channelConfigs metadata**: Added `channelConfigs.rocketchat` (with `schema`) to `openclaw.plugin.json`, reusing the existing Rocket.Chat config schema. Clears the "channel plugin manifest declares rocketchat without channelConfigs metadata" warning so the config schema and setup surfaces are available before runtime load.
+
+
 ## [0.6.1] - 2026-02-15
 
 ### Added

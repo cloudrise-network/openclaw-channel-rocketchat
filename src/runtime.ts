@@ -2,7 +2,7 @@
  * Runtime context for Rocket.Chat plugin
  */
 
-import type { RuntimeEnv } from "openclaw/plugin-sdk";
+import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 
 let rocketChatRuntime: RuntimeEnv | null = null;
 

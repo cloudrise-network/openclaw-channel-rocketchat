@@ -2,7 +2,7 @@
  * Rocket.Chat account resolution
  */
 
-import type { OpenclawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
 
 export type RocketChatReplyMode = "thread" | "channel" | "auto";
 
@@ -93,11 +93,11 @@ export type ResolvedRocketChatAccount = {
 
 const DEFAULT_ACCOUNT_ID = "default";
 
-function getRocketChatConfig(cfg: OpenclawConfig): Record<string, unknown> | undefined {
+function getRocketChatConfig(cfg: OpenClawConfig): Record<string, unknown> | undefined {
   return (cfg as Record<string, unknown>).channels?.rocketchat;
 }
 
-export function listRocketChatAccountIds(cfg: OpenclawConfig): string[] {
+export function listRocketChatAccountIds(cfg: OpenClawConfig): string[] {
   const rc = getRocketChatConfig(cfg);
   if (!rc) return [];
 
@@ -114,13 +114,13 @@ export function listRocketChatAccountIds(cfg: OpenclawConfig): string[] {
   return [];
 }
 
-export function resolveDefaultRocketChatAccountId(cfg: OpenclawConfig): string {
+export function resolveDefaultRocketChatAccountId(cfg: OpenClawConfig): string {
   const ids = listRocketChatAccountIds(cfg);
   return ids[0] ?? DEFAULT_ACCOUNT_ID;
 }
 
 export function resolveRocketChatAccount(opts: {
-  cfg: OpenclawConfig;
+  cfg: OpenClawConfig;
   accountId?: string;
 }): ResolvedRocketChatAccount {
   const { cfg, accountId: rawAccountId } = opts;
